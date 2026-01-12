@@ -3,6 +3,9 @@ Player dataclass for Pirates of the Lost Seas.
 
 Contains player state including position, score, gems, and references to
 the leveling system and skill manager.
+
+Inherits from Player which has DataClassJSONMixin, so this class is serializable.
+All fields are either primitive types or serializable dataclasses (LevelingSystem).
 """
 
 from __future__ import annotations
@@ -21,19 +24,22 @@ class PiratesPlayer(Player):
     """
     Player state for Pirates of the Lost Seas.
 
-    Skills are managed via the skill_manager, not as individual variables.
-    Leveling is managed via the leveling property tied to this player.
+    Skills are managed via the game's skill_manager dict, not stored on the player.
+    Leveling is managed via the _leveling field which is serialized.
+
+    The game object is NEVER stored on this class - it is only passed as a
+    parameter to methods. This ensures the player remains serializable.
     """
 
     position: int = 0
     score: int = 0
     gems: list[int] = field(default_factory=list)
 
-    # Leveling system (serialized)
+    # Leveling system (serialized - has DataClassJSONMixin)
     _leveling: LevelingSystem = field(default=None)  # type: ignore
 
-    # Skill manager (not serialized - rebuilt on load)
-    # Note: skill_manager is set after creation since it needs the game reference
+    # Skill manager is stored on the game object, not on the player
+    # This avoids circular references and keeps the player serializable
 
     def __post_init__(self):
         """Initialize the leveling system if not set."""

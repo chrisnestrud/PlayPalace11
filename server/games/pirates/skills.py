@@ -4,13 +4,20 @@ Skill System for Pirates of the Lost Seas.
 Skills are dataclasses that encapsulate all skill-related state and logic.
 This replaces the scattered player variables (sword_active, portal_cooldown, etc.)
 with a clean, object-oriented design.
+
+All skill classes inherit from DataClassJSONMixin to ensure serializability.
+The skill_type field acts as a discriminator for polymorphic deserialization.
 """
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Union
 import random
+
+from mashumaro.mixins.json import DataClassJSONMixin
+from mashumaro.config import BaseConfig
+from mashumaro.types import Discriminator
 
 if TYPE_CHECKING:
     from .game import PiratesGame
@@ -18,15 +25,25 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Skill(ABC):
+class Skill(ABC, DataClassJSONMixin):
     """
     Base class for all skills in Pirates of the Lost Seas.
 
     Skills encapsulate their own state (cooldowns, active duration, uses)
     and provide methods to check availability and execute actions.
+
+    The game object is NEVER stored - it is only passed as a parameter to methods.
+    This ensures the skill remains serializable.
     """
 
+    class Config(BaseConfig):
+        discriminator = Discriminator(
+            field="skill_type",
+            include_subtypes=True,
+        )
+
     user_id: str
+    skill_type: str = ""  # Discriminator field - set by each subclass
     name: str = ""
     description: str = ""
     required_level: int = 0
@@ -161,6 +178,7 @@ class CannonballSkill(Skill):
     """
 
     def __post_init__(self):
+        self.skill_type = "cannonball"
         self.name = "Cannonball Shot"
         self.description = "Fire a cannonball at a player within 5 tiles (10 with Double Devastation)."
         self.required_level = 0
@@ -185,6 +203,7 @@ class SailorsInstinctSkill(Skill):
     """
 
     def __post_init__(self):
+        self.skill_type = "instinct"
         self.name = "Sailor's Instinct"
         self.description = "Shows map sector information and charted status."
         self.required_level = 10
@@ -238,6 +257,7 @@ class PortalSkill(CooldownSkill):
     """
 
     def __post_init__(self):
+        self.skill_type = "portal"
         self.name = "Portal"
         self.description = "Teleport to a random position in an ocean occupied by another player."
         self.required_level = 25
@@ -271,6 +291,7 @@ class GemSeekerSkill(Skill):
     uses_remaining: int = 3
 
     def __post_init__(self):
+        self.skill_type = "gem_seeker"
         self.name = "Gem Seeker"
         self.description = "Reveals the location of one uncollected gem. Limited to 3 uses per game."
         self.required_level = 40
@@ -323,6 +344,7 @@ class SwordFighterSkill(BuffSkill):
     attack_bonus: int = 4
 
     def __post_init__(self):
+        self.skill_type = "sword_fighter"
         self.name = "Sword Fighter"
         self.description = "Grants +4 attack bonus for 3 turns."
         self.required_level = 60
@@ -353,6 +375,7 @@ class PushSkill(BuffSkill):
     defense_bonus: int = 3
 
     def __post_init__(self):
+        self.skill_type = "push"
         self.name = "Push"
         self.description = "Grants +3 defense bonus for 4 turns."
         self.required_level = 75
@@ -385,6 +408,7 @@ class SkilledCaptainSkill(BuffSkill):
     defense_bonus: int = 2
 
     def __post_init__(self):
+        self.skill_type = "skilled_captain"
         self.name = "Skilled Captain"
         self.description = "Grants +2 attack and +2 defense for 4 turns."
         self.required_level = 90
@@ -413,6 +437,7 @@ class BattleshipSkill(CooldownSkill):
     """
 
     def __post_init__(self):
+        self.skill_type = "battleship"
         self.name = "Battleship"
         self.description = "Fire two cannonballs in one turn."
         self.required_level = 125
@@ -460,6 +485,7 @@ class DoubleDevastationSkill(BuffSkill):
     range_bonus: int = 5  # Adds 5 to base range of 5
 
     def __post_init__(self):
+        self.skill_type = "double_devastation"
         self.name = "Double Devastation"
         self.description = "Increases cannon range to 10 tiles for 3 turns."
         self.required_level = 200
@@ -483,17 +509,36 @@ class DoubleDevastationSkill(BuffSkill):
 # Skill Manager
 # =============================================================================
 
+# Type alias for all concrete skill types (for polymorphic serialization)
+AnySkill = Annotated[
+    Union[
+        CannonballSkill,
+        SailorsInstinctSkill,
+        PortalSkill,
+        GemSeekerSkill,
+        SwordFighterSkill,
+        PushSkill,
+        SkilledCaptainSkill,
+        BattleshipSkill,
+        DoubleDevastationSkill,
+    ],
+    Discriminator(field="skill_type", include_subtypes=True),
+]
+
 
 @dataclass
-class SkillManager:
+class SkillManager(DataClassJSONMixin):
     """
     Manages all skills for a player.
 
     Replaces the scattered skill-related variables on the player object.
+    This class is fully serializable via mashumaro.
+
+    The game object is NEVER stored - it is only passed as a parameter to methods.
     """
 
     user_id: str
-    skills: dict[str, Skill] = field(default_factory=dict)
+    skills: dict[str, AnySkill] = field(default_factory=dict)
 
     def __post_init__(self):
         """Initialize all skills for this player."""

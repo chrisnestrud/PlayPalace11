@@ -119,7 +119,7 @@ class PiratesGame(Game):
 
     @classmethod
     def get_category(cls) -> str:
-        return "category-other"
+        return "category-uncategorized"
 
     @classmethod
     def get_min_players(cls) -> int:
@@ -267,7 +267,7 @@ class PiratesGame(Game):
                 label=Localization.get(locale, "pirates-check-position"),
                 handler="_action_check_position",
                 is_enabled="_is_status_enabled",
-                is_hidden=lambda g, p: Visibility.HIDDEN,  # Always hidden, keybind only
+                is_hidden="_is_always_hidden",  # Always hidden, keybind only
             )
         )
         action_set.add(
@@ -426,6 +426,10 @@ class PiratesGame(Game):
         if not self.golden_moon_active:
             return Visibility.HIDDEN
         return Visibility.VISIBLE
+
+    def _is_always_hidden(self, player: Player) -> Visibility:
+        """Always return hidden - for keybind-only actions."""
+        return Visibility.HIDDEN
 
     # ==========================================================================
     # Game Flow

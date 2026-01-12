@@ -3,11 +3,16 @@ Leveling System for Pirates of the Lost Seas.
 
 Handles XP gain, level-ups, and skill unlock detection.
 Skill unlock levels are defined on each skill class - this system reads from them.
+
+This class inherits from DataClassJSONMixin to ensure serializability.
+The game object is NEVER stored - it is only passed as a parameter to methods.
 """
 
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from mashumaro.mixins.json import DataClassJSONMixin
 
 if TYPE_CHECKING:
     from .game import PiratesGame
@@ -20,12 +25,15 @@ def get_xp_for_level(level: int) -> int:
 
 
 @dataclass
-class LevelingSystem:
+class LevelingSystem(DataClassJSONMixin):
     """
     Manages a player's experience and level progression.
 
     Tied to a specific player via user_id.
     Skill unlock levels are read from the SkillManager - not stored here.
+
+    The game object is NEVER stored - it is only passed as a parameter to methods.
+    This ensures the leveling system remains serializable.
     """
 
     user_id: str
