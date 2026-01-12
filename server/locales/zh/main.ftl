@@ -53,6 +53,10 @@ now-spectating = { $player } 现在观战。
 welcome = 欢迎来到 PlayPalace！
 goodbye = 再见！
 
+# 用户在线状态公告
+user-online = { $player } 上线了。
+user-offline = { $player } 下线了。
+
 # 设置
 language = 语言
 language-english = English

@@ -59,6 +59,10 @@ now-spectating = { $player } is now spectating.
 welcome = Welcome to PlayPalace!
 goodbye = Goodbye!
 
+# User presence announcements
+user-online = { $player } came online.
+user-offline = { $player } went offline.
+
 # Options
 language = Language
 language-english = English

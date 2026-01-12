@@ -53,6 +53,10 @@ now-spectating = { $player } agora está assistindo.
 welcome = Bem-vindo ao PlayPalace!
 goodbye = Até logo!
 
+# Anúncios de presença do usuário
+user-online = { $player } entrou online.
+user-offline = { $player } saiu.
+
 # Opções
 language = Idioma
 language-english = Inglês

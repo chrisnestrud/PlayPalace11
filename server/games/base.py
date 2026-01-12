@@ -1731,6 +1731,7 @@ class Game(ABC, DataClassJSONMixin):
         # Set up action sets for the bot
         self.setup_player_actions(bot_player)
         self.broadcast_l("table-joined", player=bot_name)
+        self.broadcast_sound("join.ogg")
         self.rebuild_all_menus()
 
     def _action_remove_bot(self, player: Player, action_id: str) -> None:
@@ -1742,6 +1743,7 @@ class Game(ABC, DataClassJSONMixin):
                 self.player_action_sets.pop(bot.id, None)
                 self._users.pop(bot.id, None)
                 self.broadcast_l("table-left", player=bot.name)
+                self.broadcast_sound("leave.ogg")
                 break
         self.rebuild_all_menus()
 
@@ -1773,6 +1775,7 @@ class Game(ABC, DataClassJSONMixin):
             self.attach_user(player.id, bot_user)
 
             self.broadcast_l("player-replaced-by-bot", player=player.name)
+            self.broadcast_sound("leave.ogg")
 
             # Check if any humans remain
             has_humans = any(not p.is_bot for p in self.players)
@@ -1791,6 +1794,7 @@ class Game(ABC, DataClassJSONMixin):
         self._users.pop(player.id, None)
 
         self.broadcast_l("table-left", player=player.name)
+        self.broadcast_sound("leave.ogg")
 
         # Check if any humans remain
         has_humans = any(not p.is_bot for p in self.players)

@@ -180,9 +180,19 @@ class Server:
         """Handle client disconnection."""
         print(f"Client disconnected: {client.address}")
         if client.username:
+            # Broadcast offline announcement to all users (including the disconnecting user)
+            self._broadcast_presence_l("user-offline", client.username, "offline.ogg")
             # Clean up user state
             self._users.pop(client.username, None)
             self._user_states.pop(client.username, None)
+
+    def _broadcast_presence_l(
+        self, message_id: str, player_name: str, sound: str
+    ) -> None:
+        """Broadcast a localized presence announcement to all online users with sound."""
+        for username, user in self._users.items():
+            user.speak_l(message_id, player=player_name)
+            user.play_sound(sound)
 
     async def _on_client_message(self, client: ClientConnection, packet: dict) -> None:
         """Handle incoming message from client."""
@@ -243,6 +253,9 @@ class Server:
         user = NetworkUser(username, locale, client, uuid=user_uuid, preferences=preferences)
         self._users[username] = user
 
+        # Broadcast online announcement to all users (including the new user)
+        self._broadcast_presence_l("user-online", username, "online.ogg")
+
         # Send success response
         await client.send(
             {
@@ -253,13 +266,10 @@ class Server:
         )
 
         # Send game list
-        print(f"DEBUG: Sending game list to {username}")
         await self._send_game_list(client)
 
         # Check if user is in a table
-        print(f"DEBUG: Checking if {username} is in a table")
         table = self._tables.find_user_table(username)
-        print(f"DEBUG: table = {table}")
 
         if table and table.game:
             # Rejoin table - use same approach as _restore_saved_table
@@ -341,9 +351,6 @@ class Server:
 
     def _show_main_menu(self, user: NetworkUser) -> None:
         """Show the main menu to a user."""
-        print(
-            f"DEBUG: _show_main_menu called for {user.username} with locale {user.locale}"
-        )
         items = [
             MenuItem(text=Localization.get(user.locale, "play"), id="play"),
             MenuItem(
@@ -851,6 +858,7 @@ class Server:
                     game.attach_user(matching_player.id, user)
                     table.add_member(user.username, user, as_spectator=False)
                     game.broadcast_l("player-took-over", player=user.username)
+                    game.broadcast_sound("join.ogg")
                     game.rebuild_all_menus()
                     self._user_states[user.username] = {
                         "menu": "in_game",
@@ -876,6 +884,7 @@ class Server:
             table.add_member(user.username, user, as_spectator=False)
             game.add_player(user.username, user)
             game.broadcast_l("table-joined", player=user.username)
+            game.broadcast_sound("join.ogg")
             game.rebuild_all_menus()
             self._user_states[user.username] = {"menu": "in_game", "table_id": table_id}
 
