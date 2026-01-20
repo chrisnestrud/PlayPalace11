@@ -9,20 +9,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import random
 
-from mashumaro.mixins.json import DataClassJSONMixin
-
-from ..base import Game, Player, GameOptions
+from ..base import Game, Player
 from ..registry import register_game
 from ...game_utils.actions import Action, ActionSet, MenuInput, Visibility
 from ...game_utils.bot_helper import BotHelper
 from ...game_utils.game_result import GameResult, PlayerResult
-from ...game_utils.options import (
-    IntOption,
-    MenuOption,
-    BoolOption,
-    TeamModeOption,
-    option_field,
-)
 from ...game_utils.round_timer import RoundTimer
 from ...game_utils.teams import TeamManager
 from ...messages.localization import Localization
@@ -38,159 +29,12 @@ from .cards import (
     HAZARD_TO_SAFETY,
     SAFETY_TO_HAZARD,
 )
+from .options import MileByMileOptions
+from .player import MileByMilePlayer
+from .state import RaceState
 
 # Hand size
 HAND_SIZE = 6
-
-
-@dataclass
-class RaceState(DataClassJSONMixin):
-    """Per-team race state for Mile by Mile (resets each race)."""
-
-    miles: int = 0
-    problems: list[str] = field(default_factory=list)  # Active hazard types
-    safeties: list[str] = field(default_factory=list)  # Played safety types
-    battle_pile: list[Card] = field(default_factory=list)  # Cards played on/by team
-    used_200_mile: bool = False
-    dirty_trick_count: int = 0
-    has_karma: bool = True
-
-    def has_problem(self, problem_type: str) -> bool:
-        """Check if team has a specific problem."""
-        return problem_type in self.problems
-
-    def has_safety(self, safety_type: str) -> bool:
-        """Check if team has a specific safety."""
-        return safety_type in self.safeties
-
-    def has_any_problem(self) -> bool:
-        """Check if team has any problems (excluding speed limit)."""
-        return any(p != HazardType.SPEED_LIMIT for p in self.problems)
-
-    def add_problem(self, problem_type: str) -> None:
-        """Add a problem to the team."""
-        if problem_type not in self.problems:
-            self.problems.append(problem_type)
-
-    def remove_problem(self, problem_type: str) -> None:
-        """Remove a problem from the team."""
-        if problem_type in self.problems:
-            self.problems.remove(problem_type)
-
-    def add_safety(self, safety_type: str) -> None:
-        """Add a safety to the team."""
-        if safety_type not in self.safeties:
-            self.safeties.append(safety_type)
-
-    def can_play_distance(self) -> bool:
-        """Check if team can play distance cards."""
-        # Right of Way only protects against STOP and SPEED_LIMIT
-        if self.has_safety(SafetyType.RIGHT_OF_WAY):
-            # Can still be blocked by other problems (accident, flat tire, out of gas)
-            for problem in self.problems:
-                if problem not in (HazardType.STOP, HazardType.SPEED_LIMIT):
-                    return False
-            return True
-        # Otherwise, can't have any problems (except speed limit doesn't block, just restricts)
-        return not self.has_any_problem()
-
-    def reset(self) -> None:
-        """Reset state for a new race."""
-        self.miles = 0
-        self.problems = [HazardType.STOP]  # Everyone starts stopped
-        self.safeties = []
-        self.battle_pile = []
-        self.used_200_mile = False
-        self.dirty_trick_count = 0
-        self.has_karma = True
-
-
-@dataclass
-class MileByMilePlayer(Player):
-    """Player state for Mile by Mile."""
-
-    hand: list[Card] = field(default_factory=list)
-    team_index: int = 0
-
-
-@dataclass
-class MileByMileOptions(GameOptions):
-    """Options for Mile by Mile game."""
-
-    round_distance: int = option_field(
-        IntOption(
-            default=1000,
-            min_val=300,
-            max_val=3000,
-            value_key="miles",
-            label="milebymile-set-distance",
-            prompt="milebymile-enter-distance",
-            change_msg="milebymile-option-changed-distance",
-        )
-    )
-    winning_score: int = option_field(
-        IntOption(
-            default=5000,
-            min_val=1000,
-            max_val=10000,
-            value_key="score",
-            label="milebymile-set-winning-score",
-            prompt="milebymile-enter-winning-score",
-            change_msg="milebymile-option-changed-winning",
-        )
-    )
-    team_mode: str = option_field(
-        TeamModeOption(
-            default="individual",
-            value_key="mode",
-            choices=lambda g, p: TeamManager.get_all_team_modes(2, 9),
-            label="game-set-team-mode",
-            prompt="game-select-team-mode",
-            change_msg="game-option-changed-team",
-        )
-    )
-    only_allow_perfect_crossing: bool = option_field(
-        BoolOption(
-            default=True,
-            value_key="enabled",
-            label="milebymile-toggle-perfect-crossing",
-            change_msg="milebymile-option-changed-crossing",
-        )
-    )
-    allow_stacking_attacks: bool = option_field(
-        BoolOption(
-            default=False,
-            value_key="enabled",
-            label="milebymile-toggle-stacking",
-            change_msg="milebymile-option-changed-stacking",
-        )
-    )
-    reshuffle_discard_pile: bool = option_field(
-        BoolOption(
-            default=True,
-            value_key="enabled",
-            label="milebymile-toggle-reshuffle",
-            change_msg="milebymile-option-changed-reshuffle",
-        )
-    )
-    karma_rule: bool = option_field(
-        BoolOption(
-            default=False,
-            value_key="enabled",
-            label="milebymile-toggle-karma",
-            change_msg="milebymile-option-changed-karma",
-        )
-    )
-    rig_game: str = option_field(
-        MenuOption(
-            default="None",
-            value_key="rig",
-            choices=["None", "No Duplicates", "2x Attacks", "2x Defenses"],
-            label="milebymile-set-rig",
-            prompt="milebymile-select-rig",
-            change_msg="milebymile-option-changed-rig",
-        )
-    )
 
 
 @dataclass
@@ -364,7 +208,7 @@ class MileByMileGame(Game):
             )
         )
 
-        # Junk card action (hidden, triggered by shift+enter keybind)
+        # Junk card action (hidden, triggered by shift+enter or backspace keybind)
         action_set.add(
             Action(
                 id="junk_card",
@@ -427,9 +271,12 @@ class MileByMileGame(Game):
                 str(i), f"Play card {i}", [f"card_slot_{i}"], state=KeybindState.ACTIVE
             )
 
-        # Shift+Enter to discard the selected card
+        # Shift+Enter or Backspace to discard the selected card
         self.define_keybind(
             "shift+enter", "Discard card", ["junk_card"], state=KeybindState.ACTIVE
+        )
+        self.define_keybind(
+            "backspace", "Discard card", ["junk_card"], state=KeybindState.ACTIVE
         )
 
     def _update_card_actions(self, player: MileByMilePlayer) -> None:
@@ -1057,7 +904,7 @@ class MileByMileGame(Game):
                     user.speak_l("milebymile-cant-play", card=card_name, reason=reason)
 
     def _action_junk_card(self, player: Player, action_id: str) -> None:
-        """Handle discarding the currently selected card (shift+enter keybind)."""
+        """Handle discarding the currently selected card (shift+enter or backspace keybind)."""
         if not isinstance(player, MileByMilePlayer):
             return
 
@@ -1085,6 +932,15 @@ class MileByMileGame(Game):
             return
 
         card = player.hand[slot]
+
+        # Check if discarding is allowed when card is playable
+        if not self.options.always_allow_discarding:
+            if self._can_play_card(player, card):
+                user = self.get_user(player)
+                if user:
+                    user.speak_l("milebymile-cant-discard-playable")
+                return
+
         self._discard_card(player, slot, card)
 
     def _play_card(
