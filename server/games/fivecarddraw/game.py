@@ -16,6 +16,8 @@ from ...game_utils.poker_pot import PokerPotManager
 from ...game_utils.poker_table import PokerTableState
 from ...game_utils.poker_timer import PokerTurnTimer
 from ...game_utils.poker_evaluator import best_hand, describe_hand, describe_partial_hand
+from ...game_utils.poker_actions import compute_pot_limit_caps, clamp_total_to_cap
+from ...game_utils import poker_log
 from ...game_utils.poker_state import order_after_button
 from ...messages.localization import Localization
 from ...ui.keybinds import KeybindState
@@ -520,7 +522,7 @@ class FiveCardDrawGame(Game):
             return
         p.folded = True
         self.pot_manager.mark_folded(p.id)
-        self.action_log.append(("poker-log-fold", {"player": p.name}))
+        poker_log.log_fold(self.action_log, p.name)
         self.broadcast_l("poker-player-folds", player=p.name)
         self._after_action()
 
@@ -536,11 +538,11 @@ class FiveCardDrawGame(Game):
         self.pot_manager.add_contribution(p.id, pay)
         self.betting.record_bet(p.id, pay, is_raise=False)
         if to_call == 0:
-            self.action_log.append(("poker-log-check", {"player": p.name}))
+            poker_log.log_check(self.action_log, p.name)
             self.broadcast_l("poker-player-checks", player=p.name)
         else:
             self.play_sound("game_3cardpoker/bet.ogg")
-            self.action_log.append(("poker-log-call", {"player": p.name, "amount": pay}))
+            poker_log.log_call(self.action_log, p.name, pay)
             self.broadcast_l("poker-player-calls", player=p.name, amount=pay)
         self._sync_team_scores()
         self._after_action()
@@ -571,11 +573,8 @@ class FiveCardDrawGame(Game):
         to_call = self.betting.amount_to_call(p.id)
         total = to_call + amount
         if self.options.raise_mode != "no_limit":
-            pot_total = self.pot_manager.total_pot()
-            limit = pot_total + to_call * 2
-            if self.options.raise_mode == "double_pot":
-                limit = pot_total * 2 + to_call * 2
-            total = min(total, limit)
+            caps = compute_pot_limit_caps(self.pot_manager.total_pot(), to_call, self.options.raise_mode)
+            total = clamp_total_to_cap(total, caps)
         if total > p.chips:
             total = p.chips
         if total < to_call + min_raise:
@@ -588,7 +587,7 @@ class FiveCardDrawGame(Game):
         self.play_sound("game_3cardpoker/bet.ogg")
         self.pot_manager.add_contribution(p.id, total)
         self.betting.record_bet(p.id, total, is_raise=True)
-        self.action_log.append(("poker-log-raise", {"player": p.name, "amount": total}))
+        poker_log.log_raise(self.action_log, p.name, total)
         self.broadcast_l("poker-player-raises", player=p.name, amount=total)
         self._sync_team_scores()
         self._after_action()
@@ -616,13 +615,7 @@ class FiveCardDrawGame(Game):
             return
         to_call = self.betting.amount_to_call(p.id)
         min_raise = max(self.betting.last_raise_size, 1)
-        pay = amount
-        if self.options.raise_mode != "no_limit":
-            pot_total = self.pot_manager.total_pot()
-            cap = pot_total + to_call * 2
-            if self.options.raise_mode == "double_pot":
-                cap = pot_total * 2 + to_call * 2
-            pay = min(pay, cap)
+        pay = clamp_total_to_cap(amount, compute_pot_limit_caps(self.pot_manager.total_pot(), to_call, self.options.raise_mode))
         p.chips -= pay
         p.all_in = p.chips == 0
         self.play_sound("game_3cardpoker/bet.ogg")
@@ -631,13 +624,13 @@ class FiveCardDrawGame(Game):
         is_raise = raise_amount >= min_raise and pay > to_call
         self.betting.record_bet(p.id, pay, is_raise=is_raise)
         if pay > to_call:
-            self.action_log.append(("poker-log-raise", {"player": p.name, "amount": pay}))
+            poker_log.log_raise(self.action_log, p.name, pay)
             self.broadcast_l("poker-player-raises", player=p.name, amount=pay)
         elif to_call == 0:
-            self.action_log.append(("poker-log-check", {"player": p.name}))
+            poker_log.log_check(self.action_log, p.name)
             self.broadcast_l("poker-player-checks", player=p.name)
         else:
-            self.action_log.append(("poker-log-call", {"player": p.name, "amount": pay}))
+            poker_log.log_call(self.action_log, p.name, pay)
             self.broadcast_l("poker-player-calls", player=p.name, amount=pay)
         self._sync_team_scores()
         self._after_action()

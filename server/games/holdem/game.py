@@ -16,6 +16,8 @@ from ...game_utils.poker_pot import PokerPotManager
 from ...game_utils.poker_table import PokerTableState
 from ...game_utils.poker_timer import PokerTurnTimer
 from ...game_utils.poker_evaluator import best_hand, describe_hand, describe_partial_hand
+from ...game_utils.poker_actions import compute_pot_limit_caps, clamp_total_to_cap
+from ...game_utils import poker_log
 from ...messages.localization import Localization
 from ...ui.keybinds import KeybindState
 from .bot import bot_think
@@ -721,7 +723,7 @@ class HoldemGame(Game):
             return
         p.folded = True
         self.pot_manager.mark_folded(p.id)
-        self.action_log.append(("poker-log-fold", {"player": p.name}))
+        poker_log.log_fold(self.action_log, p.name)
         self.broadcast_l("poker-player-folds", player=p.name)
         self._after_action()
 
@@ -737,11 +739,11 @@ class HoldemGame(Game):
         self.pot_manager.add_contribution(p.id, pay)
         self.betting.record_bet(p.id, pay, is_raise=False)
         if to_call == 0:
-            self.action_log.append(("poker-log-check", {"player": p.name}))
+            poker_log.log_check(self.action_log, p.name)
             self.broadcast_l("poker-player-checks", player=p.name)
         else:
             self.play_sound("game_3cardpoker/bet.ogg")
-            self.action_log.append(("poker-log-call", {"player": p.name, "amount": pay}))
+            poker_log.log_call(self.action_log, p.name, pay)
             self.broadcast_l("poker-player-calls", player=p.name, amount=pay)
         self._sync_team_scores()
         self._after_action()
@@ -772,12 +774,8 @@ class HoldemGame(Game):
             return
         total = to_call + amount
         # Apply raise mode limits
-        if self.options.raise_mode != "no_limit":
-            pot_total = self.pot_manager.total_pot()
-            limit = pot_total + to_call * 2
-            if self.options.raise_mode == "double_pot":
-                limit = pot_total * 2 + to_call * 2
-            total = min(total, limit)
+        caps = compute_pot_limit_caps(self.pot_manager.total_pot(), to_call, self.options.raise_mode)
+        total = clamp_total_to_cap(total, caps)
         if total > p.chips:
             total = p.chips
         if total < to_call + min_raise:
@@ -790,7 +788,7 @@ class HoldemGame(Game):
         self.play_sound("game_3cardpoker/bet.ogg")
         self.pot_manager.add_contribution(p.id, total)
         self.betting.record_bet(p.id, total, is_raise=True)
-        self.action_log.append(("poker-log-raise", {"player": p.name, "amount": total}))
+        poker_log.log_raise(self.action_log, p.name, total)
         self.broadcast_l("poker-player-raises", player=p.name, amount=total)
         self._sync_team_scores()
         self._after_action()
@@ -801,13 +799,9 @@ class HoldemGame(Game):
         to_call = self.betting.amount_to_call(player.id)
         min_raise = max(self.betting.last_raise_size, 1)
         amount = min_raise
-        if self.options.raise_mode != "no_limit":
-            pot_total = self.pot_manager.total_pot()
-            cap = pot_total + to_call * 2
-            if self.options.raise_mode == "double_pot":
-                cap = pot_total * 2 + to_call * 2
-            total = min(to_call + amount, cap)
-            amount = max(min_raise, total - to_call)
+        caps = compute_pot_limit_caps(self.pot_manager.total_pot(), to_call, self.options.raise_mode)
+        total = clamp_total_to_cap(to_call + amount, caps)
+        amount = max(min_raise, total - to_call)
         max_affordable = max(1, player.chips - to_call)
         amount = min(amount, max_affordable)
         return str(max(1, amount))
@@ -821,13 +815,7 @@ class HoldemGame(Game):
             return
         to_call = self.betting.amount_to_call(p.id)
         min_raise = max(self.betting.last_raise_size, 1)
-        pay = amount
-        if self.options.raise_mode != "no_limit":
-            pot_total = self.pot_manager.total_pot()
-            cap = pot_total + to_call * 2
-            if self.options.raise_mode == "double_pot":
-                cap = pot_total * 2 + to_call * 2
-            pay = min(pay, cap)
+        pay = clamp_total_to_cap(amount, compute_pot_limit_caps(self.pot_manager.total_pot(), to_call, self.options.raise_mode))
         p.chips -= pay
         p.all_in = p.chips == 0
         self.play_sound("game_3cardpoker/bet.ogg")
@@ -836,13 +824,13 @@ class HoldemGame(Game):
         is_raise = raise_amount >= min_raise and pay > to_call
         self.betting.record_bet(p.id, pay, is_raise=is_raise)
         if pay > to_call:
-            self.action_log.append(("poker-log-raise", {"player": p.name, "amount": pay}))
+            poker_log.log_raise(self.action_log, p.name, pay)
             self.broadcast_l("poker-player-raises", player=p.name, amount=pay)
         elif to_call == 0:
-            self.action_log.append(("poker-log-check", {"player": p.name}))
+            poker_log.log_check(self.action_log, p.name)
             self.broadcast_l("poker-player-checks", player=p.name)
         else:
-            self.action_log.append(("poker-log-call", {"player": p.name, "amount": pay}))
+            poker_log.log_call(self.action_log, p.name, pay)
             self.broadcast_l("poker-player-calls", player=p.name, amount=pay)
         self._sync_team_scores()
         self._after_action()
