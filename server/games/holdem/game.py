@@ -19,7 +19,7 @@ from ...game_utils.poker_evaluator import best_hand, describe_hand, describe_par
 from ...messages.localization import Localization
 from ...ui.keybinds import KeybindState
 from .bot import bot_think
-from .state import order_after_button
+from ...game_utils.poker_state import order_after_button
 
 
 TURN_TIMER_CHOICES = ["5", "10", "15", "20", "30", "45", "60", "90", "0"]

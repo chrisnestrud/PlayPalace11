@@ -16,8 +16,10 @@ from ...game_utils.poker_pot import PokerPotManager
 from ...game_utils.poker_table import PokerTableState
 from ...game_utils.poker_timer import PokerTurnTimer
 from ...game_utils.poker_evaluator import best_hand, describe_hand, describe_partial_hand
+from ...game_utils.poker_state import order_after_button
 from ...messages.localization import Localization
 from ...ui.keybinds import KeybindState
+from .bot import bot_think
 
 
 TURN_TIMER_CHOICES = ["5", "10", "15", "20", "30", "45", "60", "90", "0"]
@@ -507,61 +509,7 @@ class FiveCardDrawGame(Game):
         BotHelper.on_tick(self)
 
     def bot_think(self, player: FiveCardDrawPlayer) -> str | None:
-        if self.current_player != player:
-            return None
-        if self.phase == "draw":
-            if len(player.hand) >= 5:
-                score, _ = best_hand(player.hand)
-                category = score[0]
-            else:
-                category = 0
-            ranks = [card.rank for card in player.hand]
-            counts = {}
-            for r in ranks:
-                counts[r] = counts.get(r, 0) + 1
-            # Determine discard indices based on hand strength
-            keep_ranks: set[int] = set()
-            if category >= 4:  # straight or better
-                keep_ranks = set(ranks)
-            elif category == 3:  # three of a kind
-                keep_ranks = {r for r, c in counts.items() if c == 3}
-            elif category == 2:  # two pair
-                keep_ranks = {r for r, c in counts.items() if c == 2}
-            elif category == 1:  # one pair
-                keep_ranks = {r for r, c in counts.items() if c == 2}
-            else:  # high card
-                keep_ranks = set()
-
-            discard_indices = [i for i, card in enumerate(player.hand) if card.rank not in keep_ranks]
-            max_discards = 4 if any(card.rank == 1 for card in player.hand) else 3
-            if len(discard_indices) > max_discards:
-                discard_indices = discard_indices[:max_discards]
-            player.to_discard = set(discard_indices)
-            return "draw_cards"
-        if self.betting:
-            to_call = self.betting.amount_to_call(player.id)
-            if len(player.hand) >= 5:
-                score, _ = best_hand(player.hand)
-                category = score[0]
-            else:
-                category = 0
-            min_raise = max(self.betting.last_raise_size, 1)
-            can_raise = self.betting.can_raise() and (to_call + min_raise) <= player.chips
-            if to_call == 0:
-                if can_raise and category >= 1:
-                    return "raise"
-                return "call"
-            # Simple strength check
-            if to_call >= player.chips:
-                return "call"
-            if category >= 2 and to_call <= max(1, player.chips // 6):
-                return "call"
-            if category >= 1 and to_call <= max(1, player.chips // 12):
-                return "call"
-            if to_call <= max(1, player.chips // 25):
-                return "call"
-            return "fold"
-        return None
+        return bot_think(self, player)
 
     # ==========================================================================
     # Action handlers
@@ -839,14 +787,7 @@ class FiveCardDrawGame(Game):
         if len(winners) <= 1:
             return winners
         active_ids = [p.id for p in self.get_active_players()]
-        if not active_ids:
-            return winners
-        button_id = self.table_state.get_button_id(active_ids)
-        if button_id in active_ids:
-            start_index = (active_ids.index(button_id) + 1) % len(active_ids)
-            order = active_ids[start_index:] + active_ids[:start_index]
-        else:
-            order = active_ids
+        order = order_after_button(active_ids, self.table_state.get_button_id(active_ids))
         return sorted(winners, key=lambda p: order.index(p.id) if p.id in order else len(order))
 
     # ==========================================================================
