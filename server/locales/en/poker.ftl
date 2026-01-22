@@ -20,6 +20,10 @@ poker-read-hand = Read hand
 poker-read-table = Read table cards
 poker-hand-value = Hand value
 poker-read-card = Read card { $index }
+poker-dealt-cards = You are dealt { $cards }.
+poker-flop = Flop: { $cards }.
+poker-turn = Turn: { $card }.
+poker-river = River: { $card }.
 
 poker-pot-total = Pot is { $amount } chips.
 poker-pot-main = Main pot: { $amount } chips.
@@ -50,6 +54,8 @@ poker-button-is = Button is with { $player }.
 poker-dealer-is = Dealer is { $player }.
 poker-position = You are { $position } seats after the button.
 poker-position-dealer = You are { $position } seats after the dealer.
+poker-show-hand = { $player }: { $cards } ({ $hand }).
+poker-reveal-only-showdown = You can only reveal cards at the end of the hand.
 
 poker-reveal-both = Reveal both hole cards
 poker-reveal-first = Reveal first hole card

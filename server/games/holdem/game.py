@@ -18,6 +18,8 @@ from ...game_utils.poker_timer import PokerTurnTimer
 from ...game_utils.poker_evaluator import best_hand, describe_hand, describe_partial_hand
 from ...messages.localization import Localization
 from ...ui.keybinds import KeybindState
+from .bot import bot_think
+from .state import order_after_button
 
 
 TURN_TIMER_CHOICES = ["5", "10", "15", "20", "30", "45", "60", "90", "0"]
@@ -33,9 +35,8 @@ TURN_TIMER_LABELS = {
     "0": "poker-timer-unlimited",
 }
 
-BLIND_TIMER_CHOICES = ["0", "5", "10", "15", "20", "30"]
+BLIND_TIMER_CHOICES = ["5", "10", "15", "20", "30"]
 BLIND_TIMER_LABELS = {
-    "0": "poker-blind-timer-unlimited",
     "5": "poker-blind-timer-5",
     "10": "poker-blind-timer-10",
     "15": "poker-blind-timer-15",
@@ -119,7 +120,7 @@ class HoldemOptions(GameOptions):
         MenuOption(
             choices=BLIND_TIMER_CHOICES,
             choice_labels=BLIND_TIMER_LABELS,
-            default="0",
+            default="20",
             label="holdem-set-blind-timer",
             prompt="holdem-select-blind-timer",
             change_msg="holdem-option-changed-blind-timer",
@@ -170,7 +171,7 @@ class HoldemGame(Game):
     last_sb_pay: int = 0
     last_bb_pay: int = 0
     pending_showdown: bool = False
-    pending_board_reveals: list[int] = field(default_factory=list)
+    pending_board_reveals: list[tuple[str, int]] = field(default_factory=list)
     pending_board_delay_ticks: int = 0
     pending_board_wait_ticks: int = 0
 
@@ -401,7 +402,7 @@ class HoldemGame(Game):
         self.define_keybind("g", "Hand value", ["speak_hand_value"], include_spectators=False)
         self.define_keybind("x", "Button", ["check_button"], include_spectators=True)
         self.define_keybind("z", "Position", ["check_position"], include_spectators=True)
-        self.define_keybind("b", "Current bet", ["check_bet"], include_spectators=True)
+        self.define_keybind("n", "Current bet", ["check_bet"], include_spectators=True)
         self.define_keybind("m", "Minimum raise", ["check_min_raise"], include_spectators=True)
         self.define_keybind("l", "Action log", ["check_log"], include_spectators=True)
         self.define_keybind("T", "Turn timer", ["check_turn_timer"], include_spectators=True)
@@ -409,6 +410,7 @@ class HoldemGame(Game):
         self.define_keybind("o", "Reveal both", ["reveal_both"], include_spectators=False)
         self.define_keybind("u", "Reveal first", ["reveal_first"], include_spectators=False)
         self.define_keybind("i", "Reveal second", ["reveal_second"], include_spectators=False)
+        self.define_keybind("w", "Read hand", ["speak_hand"], include_spectators=False)
         for i in range(1, 8):
             self.define_keybind(str(i), f"Read card {i}", [f"speak_card_{i}"], include_spectators=False)
 
@@ -556,6 +558,17 @@ class HoldemGame(Game):
             delay_ticks += 6
         for p in players:
             p.hand = sort_cards(p.hand)
+            user = self.get_user(p)
+            if user:
+                user.speak_l("poker-dealt-cards", cards=read_cards(p.hand, user.locale))
+
+    def _announce_board(self, stage: str) -> None:
+        if stage == "flop":
+            self.broadcast_l("poker-flop", cards=read_cards(self.community, "en"))
+        elif stage == "turn":
+            self.broadcast_l("poker-turn", card=card_name(self.community[-1], "en"))
+        elif stage == "river":
+            self.broadcast_l("poker-river", card=card_name(self.community[-1], "en"))
 
     def _deal_community(self, count: int) -> None:
         # Burn card (cosmetic)
@@ -580,12 +593,13 @@ class HoldemGame(Game):
         self.pending_showdown = True
         self.pending_board_delay_ticks = max(0, delay_between_rounds)
         self.pending_board_wait_ticks = 0
-        reveal_counts: list[int] = []
+        reveal_counts: list[tuple[str, int]] = []
         if len(self.community) == 0:
-            reveal_counts.append(3)
+            reveal_counts.append(("flop", 3))
             needed -= 3
         while needed > 0:
-            reveal_counts.append(1)
+            stage = "turn" if len(reveal_counts) == 1 else "river"
+            reveal_counts.append((stage, 1))
             needed -= 1
         self.pending_board_reveals = reveal_counts
 
@@ -648,7 +662,7 @@ class HoldemGame(Game):
             return
         self.announce_turn(turn_sound="game_3cardpoker/turn.ogg")
         if p.is_bot:
-            BotHelper.jolt_bot(p, ticks=random.randint(15, 25))
+            BotHelper.jolt_bot(p, ticks=random.randint(30, 50))
         self._start_turn_timer()
         self.rebuild_all_menus()
 
@@ -681,8 +695,9 @@ class HoldemGame(Game):
                 self.pending_board_wait_ticks -= 1
                 return
             if self.pending_board_reveals:
-                count = self.pending_board_reveals.pop(0)
+                stage, count = self.pending_board_reveals.pop(0)
                 self._deal_community(count)
+                self._announce_board(stage)
                 if self.pending_board_reveals and self.pending_board_delay_ticks > 0:
                     self.pending_board_wait_ticks = self.pending_board_delay_ticks
                 return
@@ -695,20 +710,7 @@ class HoldemGame(Game):
         BotHelper.on_tick(self)
 
     def bot_think(self, player: HoldemPlayer) -> str | None:
-        if self.current_player != player:
-            return None
-        if not self.betting:
-            return None
-        to_call = self.betting.amount_to_call(player.id)
-        if to_call == 0:
-            return "call"
-        # Evaluate with available cards
-        score, _ = best_hand(player.hand + self.community) if len(player.hand) + len(self.community) >= 5 else (None, None)
-        if score and score[0] >= 1 and to_call <= max(1, player.chips // 10):
-            return "call"
-        if to_call <= max(1, player.chips // 20):
-            return "call"
-        return "fold"
+        return bot_think(self, player)
 
     # ==========================================================================
     # Actions
@@ -854,12 +856,15 @@ class HoldemGame(Game):
         if self.phase == "preflop":
             self.phase = "flop"
             self._deal_community(3)
+            self._announce_board("flop")
         elif self.phase == "flop":
             self.phase = "turn"
             self._deal_community(1)
+            self._announce_board("turn")
         elif self.phase == "turn":
             self.phase = "river"
             self._deal_community(1)
+            self._announce_board("river")
         else:
             self._showdown()
             return
@@ -868,6 +873,7 @@ class HoldemGame(Game):
     def _showdown(self) -> None:
         self.phase = "showdown"
         self.broadcast_l("poker-showdown")
+        self._announce_showdown_hands()
         self._resolve_pots()
         self._advance_blind_level()
         self._start_new_hand()
@@ -920,18 +926,27 @@ class HoldemGame(Game):
                 self.broadcast_l("poker-players-split-pot", players=names, amount=pot.amount, hand=desc)
         self._sync_team_scores()
 
+    def _announce_showdown_hands(self) -> None:
+        active = [p for p in self.get_active_players() if isinstance(p, HoldemPlayer) and not p.folded]
+        if len(active) <= 1:
+            return
+        active_ids = [p.id for p in active]
+        order = order_after_button(active_ids, self.table_state.get_button_id(active_ids))
+        scored: list[tuple[tuple[int, tuple[int, ...]], HoldemPlayer]] = []
+        for p in active:
+            score, _ = best_hand(p.hand + self.community)
+            scored.append((score, p))
+        scored.sort(key=lambda item: (item[0], -order.index(item[1].id)), reverse=True)
+        for score, p in scored:
+            cards = read_cards(p.hand, "en")
+            desc = describe_hand(score, "en")
+            self.broadcast_l("poker-show-hand", player=p.name, cards=cards, hand=desc)
+
     def _order_winners_by_button(self, winners: list[HoldemPlayer]) -> list[HoldemPlayer]:
         if len(winners) <= 1:
             return winners
         active_ids = [p.id for p in self.get_active_players()]
-        if not active_ids:
-            return winners
-        button_id = self.table_state.get_button_id(active_ids)
-        if button_id in active_ids:
-            start_index = (active_ids.index(button_id) + 1) % len(active_ids)
-            order = active_ids[start_index:] + active_ids[:start_index]
-        else:
-            order = active_ids
+        order = order_after_button(active_ids, self.table_state.get_button_id(active_ids))
         return sorted(winners, key=lambda p: order.index(p.id) if p.id in order else len(order))
 
     # ==========================================================================
@@ -1137,7 +1152,7 @@ class HoldemGame(Game):
 
     def _is_reveal_enabled(self, player: Player) -> str | None:
         if self.phase != "showdown":
-            return "action-not-playing"
+            return "poker-reveal-only-showdown"
         return None
 
     def _is_reveal_hidden(self, player: Player) -> Visibility:
