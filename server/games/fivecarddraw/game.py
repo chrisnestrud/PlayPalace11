@@ -686,6 +686,8 @@ class FiveCardDrawGame(Game):
             idx = int(action_id.split("_")[-1]) - 1
         except ValueError:
             return
+        if idx < 0 or idx >= len(p.hand):
+            return
         if idx in p.to_discard:
             p.to_discard.remove(idx)
         else:

@@ -169,6 +169,10 @@ class HoldemGame(Game):
     current_big_blind: int = 0
     last_sb_pay: int = 0
     last_bb_pay: int = 0
+    pending_showdown: bool = False
+    pending_board_reveals: list[int] = field(default_factory=list)
+    pending_board_delay_ticks: int = 0
+    pending_board_wait_ticks: int = 0
 
     @classmethod
     def get_name(cls) -> str:
@@ -465,6 +469,10 @@ class HoldemGame(Game):
         self.action_log = []
         self.pot_manager.reset()
         self.community = []
+        self.pending_showdown = False
+        self.pending_board_reveals = []
+        self.pending_board_delay_ticks = 0
+        self.pending_board_wait_ticks = 0
         self.deck, _ = DeckFactory.standard_deck()
         self.deck.shuffle()
 
@@ -562,12 +570,31 @@ class HoldemGame(Game):
             self.schedule_sound(sound, delay_ticks, volume=70)
             delay_ticks += 6
 
+    def _start_all_in_showdown(self, delay_between_rounds: int = 0) -> None:
+        if self.pending_showdown:
+            return
+        needed = 5 - len(self.community)
+        if needed <= 0:
+            self._showdown()
+            return
+        self.pending_showdown = True
+        self.pending_board_delay_ticks = max(0, delay_between_rounds)
+        self.pending_board_wait_ticks = 0
+        reveal_counts: list[int] = []
+        if len(self.community) == 0:
+            reveal_counts.append(3)
+            needed -= 3
+        while needed > 0:
+            reveal_counts.append(1)
+            needed -= 1
+        self.pending_board_reveals = reveal_counts
+
     def _start_betting_round(self, preflop: bool) -> None:
         active_ids = [p.id for p in self.get_active_players() if p.chips > 0 and not p.folded]
         order = [p.id for p in self.get_active_players() if p.id in active_ids]
         self.betting = PokerBettingRound(order=order, max_raises=self.options.max_raises or None)
         if not order:
-            self._showdown()
+            self._start_all_in_showdown(delay_between_rounds=100)
             return
         if preflop:
             # Initialize with posted blinds
@@ -648,6 +675,19 @@ class HoldemGame(Game):
     def on_tick(self) -> None:
         super().on_tick()
         if not self.game_active:
+            return
+        if self.pending_showdown:
+            if self.pending_board_wait_ticks > 0:
+                self.pending_board_wait_ticks -= 1
+                return
+            if self.pending_board_reveals:
+                count = self.pending_board_reveals.pop(0)
+                self._deal_community(count)
+                if self.pending_board_reveals and self.pending_board_delay_ticks > 0:
+                    self.pending_board_wait_ticks = self.pending_board_delay_ticks
+                return
+            self.pending_showdown = False
+            self._showdown()
             return
         if self.timer.tick():
             self._handle_turn_timeout()
@@ -786,16 +826,7 @@ class HoldemGame(Game):
         active_ids = self._active_betting_ids()
         if active_ids and active_ids.issubset(self._all_in_ids()):
             # Reveal remaining community cards and go to showdown
-            if self.phase == "preflop":
-                self._deal_community(3)
-                self._deal_community(1)
-                self._deal_community(1)
-            elif self.phase == "flop":
-                self._deal_community(1)
-                self._deal_community(1)
-            elif self.phase == "turn":
-                self._deal_community(1)
-            self._showdown()
+            self._start_all_in_showdown(delay_between_rounds=100)
             return
         if len(active_ids) <= 1:
             self._award_uncontested(active_ids)
