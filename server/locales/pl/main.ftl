@@ -64,7 +64,6 @@ user-offline = { $player } poszedł offline
 
 # Options
 language = Język
-language-polish = Polski
 language-option = Język: { $language }
 language-changed = zmieniono język na  { $language }.
 

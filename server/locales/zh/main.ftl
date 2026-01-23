@@ -60,7 +60,6 @@ user-offline = { $player } 下线了。
 
 # 设置
 language = 语言
-language-english = English
 language-option = 语言：{ $language }
 language-changed = 语言已设置为 { $language }。
 

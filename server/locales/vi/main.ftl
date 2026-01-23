@@ -66,7 +66,6 @@ user-offline = { $player } đã offline.
 
 # Tùy chọn
 language = Ngôn ngữ
-language-english = Tiếng Anh
 language-option = Ngôn ngữ: { $language }
 language-changed = Ngôn ngữ đã đổi sang { $language }.
 
