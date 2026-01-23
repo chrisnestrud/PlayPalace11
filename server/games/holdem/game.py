@@ -555,14 +555,15 @@ class HoldemGame(Game):
         else:
             start_index = (self.table_state.button_index + 1) % len(players)
         order = players[start_index:] + players[:start_index]
-        sounds: list[tuple[str, int]] = []
+        delay_ticks = 0
         for _ in range(2):
             for p in order:
                 card = self.deck.draw_one() if self.deck else None
                 if card:
                     p.hand.append(card)
-                sounds.append((f"game_cards/draw{random.randint(1,4)}.ogg", 6))
-        self.schedule_sound_sequence(sounds, start_delay=0)
+                sound = f"game_cards/draw{random.randint(1,4)}.ogg"
+                self.schedule_sound(sound, delay_ticks, volume=70)
+                delay_ticks += 6
         for p in players:
             p.hand = sort_cards(p.hand)
             user = self.get_user(p)
@@ -581,13 +582,14 @@ class HoldemGame(Game):
         # Burn card (cosmetic)
         if self.deck and not self.deck.is_empty():
             self.deck.draw_one()
-        sounds: list[tuple[str, int]] = []
+        delay_ticks = 0
         for _ in range(count):
             card = self.deck.draw_one() if self.deck else None
             if card:
                 self.community.append(card)
-            sounds.append((f"game_cards/draw{random.randint(1,4)}.ogg", 6))
-        self.schedule_sound_sequence(sounds, start_delay=0)
+            sound = f"game_cards/draw{random.randint(1,4)}.ogg"
+            self.schedule_sound(sound, delay_ticks, volume=70)
+            delay_ticks += 6
 
     def _start_all_in_showdown(self, delay_between_rounds: int = 0) -> None:
         if self.pending_showdown:
@@ -1057,7 +1059,14 @@ class HoldemGame(Game):
             if idx == 0:
                 user.speak_l("poker-position-button")
             else:
-                user.speak_l("poker-position", position=idx)
+                key = "poker-position-seat" if idx == 1 else "poker-position-seats"
+                user.speak_l(key, position=idx)
+        if len(order) >= 2:
+            sb_idx, bb_idx = self.table_state.get_blind_indices(order)
+            sb_player = self.get_player_by_id(order[sb_idx])
+            bb_player = self.get_player_by_id(order[bb_idx])
+            if sb_player and bb_player:
+                user.speak_l("poker-blinds-players", sb=sb_player.name, bb=bb_player.name)
 
     def _action_check_turn_timer(self, player: Player, action_id: str) -> None:
         user = self.get_user(player)

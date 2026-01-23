@@ -54,10 +54,12 @@ poker-blinds-raise-next-hand = Blinds will raise next hand.
 
 poker-button-is = Button is with { $player }.
 poker-dealer-is = Dealer is { $player }.
-poker-position = You are { $position } seats after the button.
+poker-position-seat = You are { $position } seat after the button.
+poker-position-seats = You are { $position } seats after the button.
 poker-position-button = You are on the button.
 poker-position-dealer = You are { $position } seats after the dealer.
-poker-show-hand = { $player }: { $cards } ({ $hand }).
+poker-show-hand = { $player } shows { $cards } for { $hand }.
+poker-blinds-players = Small blind: { $sb }. Big blind: { $bb }.
 poker-reveal-only-showdown = You can only reveal cards at the end of the hand.
 
 poker-reveal-both = Reveal both hole cards
