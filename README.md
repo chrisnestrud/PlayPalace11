@@ -2,6 +2,12 @@
 
 PlayPalace is an accessible online gaming platform. This repository contains both the server (v11, modern) and client (ported from v10).
 
+## Contact
+
+If you have questions, want realtime information, or plan to develop for the project, you can join the [Play Palace discord server](https://discord.gg/PBPZegdsTN) here.
+
+This is the primary place for discussion about the project.
+
 ## Quick Start
 
 You need Python 3.11 or later. We use [uv](https://docs.astral.sh/uv/) for dependency management on the server and client.
@@ -13,6 +19,8 @@ cd server
 uv sync
 uv run python main.py
 ```
+
+To run a local server with the default configuration, you can launch the "run_server.bat" file as a shortcut.
 
 The server starts on port 8000 by default. Use `--help` to see all options:
 
@@ -56,9 +64,11 @@ uv sync
 uv run python client.py
 ```
 
-The client requires wxPython and a few other dependencies from v10. It connects to localhost:8000 by default.
+You can launch the "run_client.bat" file as a shortcut.
 
-The client supports both `ws://` and `wss://` connections. When connecting to a server with SSL enabled, use the "Over Internet" option and enter the server address with the `wss://` prefix (e.g., `wss://example.com`). The client will handle SSL certificate validation automatically.
+The client requires wxPython and a few other dependencies from v10.
+
+The client supports both `ws://` and `wss://` connections. When connecting to a server with SSL enabled, enter the server address with the `wss://` prefix (e.g., `wss://example.com`). The client will handle SSL certificate validation automatically.
 Use the **Server Manager** button on the login screen to add/edit servers (name, host, port, notes) and manage saved accounts for each server. You can add `localhost` for local testing.
 
 ## Project Structure
