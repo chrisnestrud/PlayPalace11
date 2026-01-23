@@ -37,11 +37,11 @@ def format_showdown_lines(
     button_id: str | None,
     get_id: Callable[[TPlayer], str],
     format_fn: Callable[[TPlayer], tuple[tuple[str, dict], tuple[int, tuple[int, ...]]]],
-) -> list[tuple[tuple[str, dict], tuple[int, tuple[int, ...]]]]:
+) -> list[tuple[str, tuple[str, dict], tuple[int, tuple[int, ...]]]]:
     ordered = sort_players_for_showdown(players, active_ids, button_id, get_id)
-    lines: list[tuple[tuple[str, dict], tuple[int, tuple[int, ...]]]] = []
+    lines: list[tuple[str, tuple[str, dict], tuple[int, tuple[int, ...]]]] = []
     for p in ordered:
         line, score = format_fn(p)
-        lines.append((line, score))
-    lines.sort(key=lambda item: item[1], reverse=True)
+        lines.append((get_id(p), line, score))
+    lines.sort(key=lambda item: item[2], reverse=True)
     return lines

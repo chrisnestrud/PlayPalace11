@@ -278,9 +278,9 @@ class FiveCardDrawGame(Game):
         )
         action_set.add(
             Action(
-                id="check_log",
-                label=Localization.get(locale, "poker-check-log"),
-                handler="_action_check_log",
+                id="check_hand_players",
+                label=Localization.get(locale, "poker-check-hand-players"),
+                handler="_action_check_hand_players",
                 is_enabled="_is_check_enabled",
                 is_hidden="_is_check_hidden",
             )
@@ -355,7 +355,7 @@ class FiveCardDrawGame(Game):
         self.define_keybind("z", "Position", ["check_position"], include_spectators=True)
         self.define_keybind("b", "Current bet", ["check_bet"], include_spectators=True)
         self.define_keybind("m", "Minimum raise", ["check_min_raise"], include_spectators=True)
-        self.define_keybind("l", "Action log", ["check_log"], include_spectators=True)
+        self.define_keybind("h", "Players in hand", ["check_hand_players"], include_spectators=True)
         self.define_keybind("T", "Turn timer", ["check_turn_timer"], include_spectators=True)
         self.define_keybind("v", "Raise mode", ["check_raise_mode"], include_spectators=True)
         for i in range(1, 6):
@@ -423,13 +423,14 @@ class FiveCardDrawGame(Game):
             return
         start_index = (self.table_state.button_index + 1) % len(players)
         order = players[start_index:] + players[:start_index]
-        delay_ticks = 0
+        delay_ticks = 4
         for _ in range(count):
             for p in order:
                 card = self.deck.draw_one() if self.deck else None
                 if card:
                     p.hand.append(card)
-            self.schedule_sound("game_cards/draw4.ogg", delay_ticks, volume=100)
+            self.schedule_sound("game_cards/draw3.ogg", delay_ticks, volume=100)
+            self.schedule_sound("game_cards/draw3.ogg", delay_ticks + 1, volume=100)
             delay_ticks += 6
         for p in players:
             p.hand = sort_cards(p.hand)
@@ -505,6 +506,7 @@ class FiveCardDrawGame(Game):
 
     def on_tick(self) -> None:
         super().on_tick()
+        self.process_scheduled_sounds()
         if not self.game_active:
             return
         if self.timer.tick():
@@ -744,6 +746,7 @@ class FiveCardDrawGame(Game):
 
     def _resolve_pots(self) -> None:
         pots = self.pot_manager.get_pots()
+        single_awards: dict[str, dict[str, object]] = {}
         for pot in pots:
             eligible_players = [self.get_player_by_id(pid) for pid in pot.eligible_player_ids]
             eligible_players = [p for p in eligible_players if isinstance(p, FiveCardDrawPlayer)]
@@ -766,19 +769,41 @@ class FiveCardDrawGame(Game):
                 winners[0].chips += remainder
             desc = describe_hand(best_score, "en")
             if len(winners) == 1:
-                self.play_sound(random.choice(["game_blackjack/win1.ogg", "game_blackjack/win2.ogg", "game_blackjack/win3.ogg"]))
-                cards = read_cards(winners[0].hand, "en")
-                self.broadcast_l(
-                    "poker-player-wins-pot-hand",
-                    player=winners[0].name,
-                    amount=pot.amount,
-                    cards=cards,
-                    hand=desc,
-                )
+                winner = winners[0]
+                entry = single_awards.get(winner.id)
+                if entry:
+                    entry["amount"] = int(entry["amount"]) + pot.amount
+                else:
+                    single_awards[winner.id] = {
+                        "name": winner.name,
+                        "amount": pot.amount,
+                        "cards": read_cards(winner.hand, "en"),
+                        "hand": desc,
+                    }
             else:
                 names = ", ".join(w.name for w in winners)
                 self.play_sound(random.choice(["game_blackjack/win1.ogg", "game_blackjack/win2.ogg", "game_blackjack/win3.ogg"]))
                 self.broadcast_l("poker-players-split-pot", players=names, amount=pot.amount, hand=desc)
+        if single_awards:
+            ordered_ids = order_after_button(
+                [p.id for p in self.get_active_players()],
+                self.table_state.get_button_id([p.id for p in self.get_active_players()]),
+            )
+            for winner_id in sorted(
+                single_awards.keys(),
+                key=lambda pid: ordered_ids.index(pid) if pid in ordered_ids else len(ordered_ids),
+            ):
+                entry = single_awards[winner_id]
+                self.play_sound(
+                    random.choice(["game_blackjack/win1.ogg", "game_blackjack/win2.ogg", "game_blackjack/win3.ogg"])
+                )
+                self.broadcast_l(
+                    "poker-player-wins-pot-hand",
+                    player=entry["name"],
+                    amount=entry["amount"],
+                    cards=entry["cards"],
+                    hand=entry["hand"],
+                )
         self._sync_team_scores()
 
     def _order_winners_by_button(self, winners: list[FiveCardDrawPlayer]) -> list[FiveCardDrawPlayer]:
@@ -820,14 +845,24 @@ class FiveCardDrawGame(Game):
         if user:
             user.speak_l("poker-min-raise", amount=min_raise)
 
-    def _action_check_log(self, player: Player, action_id: str) -> None:
+    def _action_check_hand_players(self, player: Player, action_id: str) -> None:
         user = self.get_user(player)
-        if user:
-            if not self.action_log:
-                user.speak_l("poker-log-empty")
-            else:
-                lines = [Localization.get(user.locale, mid, **kwargs) for mid, kwargs in self.action_log]
-                user.speak(", ".join(lines))
+        if not user:
+            return
+        active = [
+            p.name
+            for p in self.get_active_players()
+            if isinstance(p, FiveCardDrawPlayer) and not p.folded
+        ]
+        count = len(active)
+        if count == 0:
+            user.speak_l("poker-hand-players-none")
+            return
+        names = ", ".join(active)
+        if count == 1:
+            user.speak_l("poker-hand-players-one", names=names, count=count)
+        else:
+            user.speak_l("poker-hand-players", names=names, count=count)
 
     def _action_read_hand(self, player: Player, action_id: str) -> None:
         p = player if isinstance(player, FiveCardDrawPlayer) else None
@@ -961,7 +996,8 @@ class FiveCardDrawGame(Game):
     def _play_draw_sounds(self, count: int) -> None:
         delay_ticks = 0
         for _ in range(count):
-            self.schedule_sound("game_cards/draw4.ogg", delay_ticks, volume=100)
+            self.schedule_sound("game_cards/draw3.ogg", delay_ticks, volume=100)
+            self.schedule_sound("game_cards/draw3.ogg", delay_ticks + 1, volume=100)
             delay_ticks += 6
 
     def _sync_team_scores(self) -> None:

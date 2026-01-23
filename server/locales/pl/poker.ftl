@@ -11,6 +11,7 @@ poker-check-pot = Check pot
 poker-check-bet = Amount to call
 poker-check-min-raise = Minimum raise
 poker-check-log = Action log
+poker-check-hand-players = Players in hand
 poker-check-turn-timer = Turn timer
 poker-check-blind-timer = Blind timer
 poker-check-button = Who has the button
@@ -26,11 +27,11 @@ poker-flop = Flop: { $cards }.
 poker-turn = Turn: { $card }.
 poker-river = River: { $card }.
 
-poker-pot-total = Pot is { $amount } chips.
+poker-pot-total = { $amount } chips in the pot.
 poker-pot-main = Main pot: { $amount } chips.
 poker-pot-side = Side pot { $index }: { $amount } chips.
 poker-to-call = You need { $amount } chips to call.
-poker-min-raise = Minimum raise is { $amount } chips.
+poker-min-raise = { $amount } chips minimum raise.
 
 poker-player-folds = { $player } folds.
 poker-player-checks = { $player } checks.
@@ -67,7 +68,10 @@ poker-reveal-first = Reveal first hole card
 poker-reveal-second = Reveal second hole card
 
 poker-raise-cap-reached = Raise cap reached for this round.
-poker-raise-too-small = Minimum raise is { $amount } chips.
+poker-raise-too-small = { $amount } chips minimum raise.
+poker-hand-players-none = No players in the hand.
+poker-hand-players-one = { $count } player: { $names }.
+poker-hand-players = { $count } players: { $names }.
 poker-raise-too-large = You cannot raise more than your chip stack.
 
 poker-log-empty = No actions yet.
