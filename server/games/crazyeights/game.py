@@ -7,6 +7,7 @@ from ..base import Game, Player, GameOptions
 from ..registry import register_game
 from ...game_utils.actions import Action, ActionSet, Visibility
 from ...game_utils.cards import Card, Deck, DeckFactory, card_name
+from ...game_utils.game_result import GameResult, PlayerResult
 from ...game_utils.options import IntOption, MenuOption, option_field
 from ...game_utils.bot_helper import BotHelper
 from ...game_utils.poker_timer import PokerTurnTimer
@@ -14,6 +15,7 @@ from ...messages.localization import Localization
 from ...ui.keybinds import KeybindState
 from ...users.bot import Bot
 from ...users.base import User
+from datetime import datetime
 from .bot import bot_think
 
 
@@ -238,7 +240,7 @@ class CrazyEightsGame(Game):
                 label="clubs",
                 handler="_action_choose_suit",
                 is_enabled="_is_suit_choice_enabled",
-                is_hidden="_is_always_hidden",
+                is_hidden="_is_suit_choice_hidden",
                 show_in_actions_menu=False,
             )
         )
@@ -248,7 +250,7 @@ class CrazyEightsGame(Game):
                 label="diamonds",
                 handler="_action_choose_suit",
                 is_enabled="_is_suit_choice_enabled",
-                is_hidden="_is_always_hidden",
+                is_hidden="_is_suit_choice_hidden",
                 show_in_actions_menu=False,
             )
         )
@@ -258,7 +260,7 @@ class CrazyEightsGame(Game):
                 label="hearts",
                 handler="_action_choose_suit",
                 is_enabled="_is_suit_choice_enabled",
-                is_hidden="_is_always_hidden",
+                is_hidden="_is_suit_choice_hidden",
                 show_in_actions_menu=False,
             )
         )
@@ -268,7 +270,7 @@ class CrazyEightsGame(Game):
                 label="spades",
                 handler="_action_choose_suit",
                 is_enabled="_is_suit_choice_enabled",
-                is_hidden="_is_always_hidden",
+                is_hidden="_is_suit_choice_hidden",
                 show_in_actions_menu=False,
             )
         )
@@ -347,7 +349,7 @@ class CrazyEightsGame(Game):
         turn_set.remove_by_prefix("play_card_")
         turn_set.remove("draw")
         turn_set.remove("pass")
-        if self.status != "playing" or player.is_spectator or self.current_player != player:
+        if self.status != "playing" or player.is_spectator:
             return
         for card in player.hand:
             turn_set.add(
@@ -361,24 +363,25 @@ class CrazyEightsGame(Game):
                     show_in_actions_menu=False,
                 )
             )
-        turn_set.add(
-            Action(
-                id="draw",
-                label=Localization.get(self._player_locale(player), "crazyeights-draw"),
-                handler="_action_draw",
-                is_enabled="_is_draw_enabled",
-                is_hidden="_is_draw_hidden",
+        if self.current_player == player:
+            turn_set.add(
+                Action(
+                    id="draw",
+                    label=Localization.get(self._player_locale(player), "crazyeights-draw"),
+                    handler="_action_draw",
+                    is_enabled="_is_draw_enabled",
+                    is_hidden="_is_draw_hidden",
+                )
             )
-        )
-        turn_set.add(
-            Action(
-                id="pass",
-                label=Localization.get(self._player_locale(player), "crazyeights-pass"),
-                handler="_action_pass",
-                is_enabled="_is_pass_enabled",
-                is_hidden="_is_pass_hidden",
+            turn_set.add(
+                Action(
+                    id="pass",
+                    label=Localization.get(self._player_locale(player), "crazyeights-pass"),
+                    handler="_action_pass",
+                    is_enabled="_is_pass_enabled",
+                    is_hidden="_is_pass_hidden",
+                )
             )
-        )
 
     # ==========================================================================
     # Game flow
@@ -403,7 +406,7 @@ class CrazyEightsGame(Game):
         self._sync_team_scores()
 
         self.play_sound("game_crazyeights/intro.ogg")
-        self.intro_wait_ticks = 8 * 20
+        self.intro_wait_ticks = 7 * 20
 
     def on_tick(self) -> None:
         super().on_tick()
@@ -470,20 +473,20 @@ class CrazyEightsGame(Game):
                 if card:
                     p.hand.append(card)
 
+        # Rotate dealer/first player each hand
+        if self.turn_player_ids:
+            self.dealer_index = (self.dealer_index + 1) % len(self.turn_player_ids)
+            self.turn_index = (self.dealer_index + 1) % len(self.turn_player_ids)
+        else:
+            self.dealer_index = -1
+            self.turn_index = 0
+
         # Select starting card (numbered only)
         start_card = self._draw_start_card()
         if start_card:
             self.discard_pile.append(start_card)
             self.current_suit = start_card.suit
             self._broadcast_start_card()
-
-        # Rotate dealer/first player each hand
-        if self.turn_player_ids:
-            self.dealer_index = (self.dealer_index + 1) % len(self.turn_player_ids)
-            self.turn_index = self.dealer_index
-        else:
-            self.dealer_index = -1
-            self.turn_index = 0
         self._start_turn()
 
     def _draw_start_card(self) -> Card | None:
@@ -591,7 +594,6 @@ class CrazyEightsGame(Game):
                 self._end_round(p, last_card=card)
                 return
             self.awaiting_wild_suit = True
-            self.broadcast_l("crazyeights-wild-played", player=p.name)
             self._start_turn_timer()  # reset timer for suit selection
             if p.is_bot:
                 BotHelper.jolt_bot(p, ticks=random.randint(20, 30))
@@ -645,7 +647,7 @@ class CrazyEightsGame(Game):
             self.play_sound("game_crazyeights/draw.ogg")
         self._start_turn_timer()  # reset timer after drawing
         self._broadcast_draw(p, 1)
-        selection_id = f"play_card_{card.id}" if playable else None
+        selection_id = f"play_card_{card.id}"
         self.update_player_menu(p, selection_id=selection_id)
         if p.is_bot:
             BotHelper.jolt_bot(p, ticks=random.randint(20, 30))
@@ -748,14 +750,12 @@ class CrazyEightsGame(Game):
     def _is_play_card_enabled(self, player: Player, *, action_id: str | None = None) -> str | None:
         if self.awaiting_wild_suit:
             return "action-not-available"
-        if self._is_turn_action_enabled(player) is not None:
-            return self._is_turn_action_enabled(player)
         return None
 
     def _is_play_card_hidden(self, player: Player, *, action_id: str | None = None) -> Visibility:
-        if self.awaiting_wild_suit:
+        if self.status != "playing":
             return Visibility.HIDDEN
-        if self._is_turn_action_hidden(player) == Visibility.HIDDEN:
+        if player.is_spectator:
             return Visibility.HIDDEN
         if not isinstance(player, CrazyEightsPlayer):
             return Visibility.HIDDEN
@@ -849,6 +849,23 @@ class CrazyEightsGame(Game):
         if self.awaiting_wild_suit:
             return "action-not-available"
         return self._is_check_enabled(player)
+
+    def _is_check_scores_enabled(self, player: Player) -> str | None:
+        if self.awaiting_wild_suit:
+            return "action-not-available"
+        return super()._is_check_scores_enabled(player)
+
+    def _is_check_scores_detailed_enabled(self, player: Player) -> str | None:
+        if self.awaiting_wild_suit:
+            return "action-not-available"
+        return super()._is_check_scores_detailed_enabled(player)
+
+    def _is_suit_choice_hidden(self, player: Player) -> Visibility:
+        if not self.awaiting_wild_suit:
+            return Visibility.HIDDEN
+        if self._is_turn_action_hidden(player) == Visibility.HIDDEN:
+            return Visibility.HIDDEN
+        return Visibility.VISIBLE
 
     def _is_always_hidden(self, player: Player) -> Visibility:
         return Visibility.HIDDEN
@@ -1117,12 +1134,19 @@ class CrazyEightsGame(Game):
             )
 
     def _broadcast_start_card(self) -> None:
+        dealer = (
+            self.get_player_by_id(self.turn_player_ids[self.dealer_index])
+            if self.turn_player_ids and self.dealer_index >= 0
+            else None
+        )
+        dealer_name = dealer.name if dealer else Localization.get("en", "unknown-player")
         for p in self.players:
             user = self.get_user(p)
             if not user:
                 continue
             user.speak_l(
                 "crazyeights-start-card",
+                player=dealer_name,
                 card=self.format_top_card(user.locale),
             )
 
@@ -1184,11 +1208,41 @@ class CrazyEightsGame(Game):
                 user.play_sound(lose_small)
 
     def _end_game(self, winner: CrazyEightsPlayer) -> None:
-        self.status = "finished"
-        self.game_active = False
         self._stop_turn_loop()
         self.play_sound("game_crazyeights/hitmark.ogg")
         self.broadcast_l("crazyeights-game-winner", player=winner.name, score=winner.score)
+        self.finish_game()
+
+    def build_game_result(self) -> GameResult:
+        active = [p for p in self.players if not p.is_spectator]
+        winner = max(active, key=lambda p: p.score, default=None)
+        final_scores = {p.name: p.score for p in active}
+        return GameResult(
+            game_type=self.get_type(),
+            timestamp=datetime.now().isoformat(),
+            duration_ticks=self.sound_scheduler_tick,
+            player_results=[
+                PlayerResult(
+                    player_id=p.id,
+                    player_name=p.name,
+                    is_bot=p.is_bot,
+                )
+                for p in active
+            ],
+            custom_data={
+                "winner_name": winner.name if winner else None,
+                "winner_score": winner.score if winner else 0,
+                "final_scores": final_scores,
+            },
+        )
+
+    def format_end_screen(self, result: GameResult, locale: str) -> list[str]:
+        lines = [Localization.get(locale, "game-final-scores")]
+        final_scores = result.custom_data.get("final_scores", {})
+        sorted_scores = sorted(final_scores.items(), key=lambda item: item[1], reverse=True)
+        for i, (name, score) in enumerate(sorted_scores, 1):
+            lines.append(f"{i}. {name}: {score}")
+        return lines
 
     def _sync_team_scores(self) -> None:
         for team in self._team_manager.teams:

@@ -1,41 +1,41 @@
 # Crazy Eights
 
-game-name-crazyeights = 疯狂八
+game-name-crazyeights = Crazy Eights
 
-crazyeights-set-winning-score = 胜利分数：{ $score }
-crazyeights-enter-winning-score = 输入胜利分数
-crazyeights-option-changed-winning-score = 胜利分数已设为 { $score }。
+crazyeights-set-winning-score = Winning score: { $score }
+crazyeights-enter-winning-score = Enter winning score
+crazyeights-option-changed-winning-score = Winning score set to { $score }.
 
-crazyeights-set-turn-timer = 回合计时：{ $mode }
-crazyeights-select-turn-timer = 选择回合计时
-crazyeights-option-changed-turn-timer = 回合计时已设为 { $mode }。
+crazyeights-set-turn-timer = Turn timer: { $mode }
+crazyeights-select-turn-timer = Select turn timer
+crazyeights-option-changed-turn-timer = Turn timer set to { $mode }.
 
-crazyeights-draw = 摸牌
-crazyeights-pass = 过牌
-crazyeights-read-top = 读出顶牌
-crazyeights-read-counts = 读出牌数
+crazyeights-draw = Draw
+crazyeights-pass = Pass
+crazyeights-read-top = Read top card
+crazyeights-read-counts = Read card counts
 
-crazyeights-new-hand = 新一局 { $round }。
-crazyeights-start-card = 起始牌：{ $card }。
-crazyeights-wild-played = { $player } 打出了万能牌。
+crazyeights-new-hand = Round { $round }.
+crazyeights-start-card = { $player } turns up { $card }.
+crazyeights-wild-played = { $player } played a Wild.
 
-crazyeights-no-players = 没有玩家。
-crazyeights-no-top = 没有顶牌。
+crazyeights-no-players = No players.
+crazyeights-no-top = No top card.
 
-crazyeights-wild = 万能牌
-crazyeights-wild-suit = 万能牌，{ $suit }
-crazyeights-reverse = 反转 { $suit }
-crazyeights-skip = 跳过 { $suit }
-crazyeights-draw-two = 摸两张 { $suit }
+crazyeights-wild = Wild
+crazyeights-wild-suit = Wild, { $suit }
+crazyeights-reverse = Reverse of { $suit }
+crazyeights-skip = Skip of { $suit }
+crazyeights-draw-two = Draw Two of { $suit }
 
-crazyeights-suit-chosen = 当前花色为 { $suit }。
+crazyeights-suit-chosen = Suit is now { $suit }.
 
-crazyeights-round-winner = { $player } 获得 { $points } 分。{ $detail }
-crazyeights-round-points-from = { $points } 来自 { $player }
+crazyeights-round-winner = { $player } wins { $points } points. { $detail }
+crazyeights-round-points-from = { $points } from { $player }
 
-crazyeights-game-winner = { $player } 以 { $score } 分获胜。
+crazyeights-game-winner = { $player } wins with { $score } points.
 
-crazyeights-player-plays = { $player } 出 { $card }。
-crazyeights-player-draws-one = { $player } 摸一张牌。
-crazyeights-player-draws-many = { $player } 摸 { $count } 张牌。
-crazyeights-player-passes = { $player } 过牌。
+crazyeights-player-plays = { $player } plays { $card }.
+crazyeights-player-draws-one = { $player } draws a card.
+crazyeights-player-draws-many = { $player } draws { $count } cards.
+crazyeights-player-passes = { $player } passes.
