@@ -73,4 +73,6 @@ def bot_think(game: "CrazyEightsGame", player: "CrazyEightsPlayer") -> str | Non
         idx = choose_playable_index(game, player)
         if idx is not None:
             return f"play_card_{idx}"
-    return "draw"
+    if game._can_draw(player):
+        return "draw"
+    return "pass"
