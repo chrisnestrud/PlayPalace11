@@ -15,7 +15,7 @@ crazyeights-pass = Pass
 crazyeights-read-top = Read top card
 crazyeights-read-counts = Read card counts
 
-crazyeights-new-hand = New hand { $round }.
+crazyeights-new-hand = Round { $round }.
 crazyeights-start-card = Starting card: { $card }.
 crazyeights-wild-played = { $player } played a Wild.
 

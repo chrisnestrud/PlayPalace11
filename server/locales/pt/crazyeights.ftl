@@ -1,41 +1,41 @@
 # Crazy Eights
 
-game-name-crazyeights = Oito Maluco
+game-name-crazyeights = Crazy Eights
 
-crazyeights-set-winning-score = Pontuação para vencer: { $score }
-crazyeights-enter-winning-score = Digite a pontuação para vencer
-crazyeights-option-changed-winning-score = Pontuação para vencer definida para { $score }.
+crazyeights-set-winning-score = Winning score: { $score }
+crazyeights-enter-winning-score = Enter winning score
+crazyeights-option-changed-winning-score = Winning score set to { $score }.
 
-crazyeights-set-turn-timer = Tempo do turno: { $mode }
-crazyeights-select-turn-timer = Selecione o tempo do turno
-crazyeights-option-changed-turn-timer = Tempo do turno definido para { $mode }.
+crazyeights-set-turn-timer = Turn timer: { $mode }
+crazyeights-select-turn-timer = Select turn timer
+crazyeights-option-changed-turn-timer = Turn timer set to { $mode }.
 
-crazyeights-draw = Comprar
-crazyeights-pass = Passar
-crazyeights-read-top = Ler carta do topo
-crazyeights-read-counts = Ler número de cartas
+crazyeights-draw = Draw
+crazyeights-pass = Pass
+crazyeights-read-top = Read top card
+crazyeights-read-counts = Read card counts
 
-crazyeights-new-hand = Nova mão { $round }.
-crazyeights-start-card = Carta inicial: { $card }.
-crazyeights-wild-played = { $player } jogou um curinga.
+crazyeights-new-hand = Round { $round }.
+crazyeights-start-card = Starting card: { $card }.
+crazyeights-wild-played = { $player } played a Wild.
 
-crazyeights-no-players = Sem jogadores.
-crazyeights-no-top = Nenhuma carta no topo.
+crazyeights-no-players = No players.
+crazyeights-no-top = No top card.
 
-crazyeights-wild = Curinga
-crazyeights-wild-suit = Curinga, { $suit }
-crazyeights-reverse = Reverso de { $suit }
-crazyeights-skip = Pular de { $suit }
-crazyeights-draw-two = Comprar duas de { $suit }
+crazyeights-wild = Wild
+crazyeights-wild-suit = Wild, { $suit }
+crazyeights-reverse = Reverse of { $suit }
+crazyeights-skip = Skip of { $suit }
+crazyeights-draw-two = Draw Two of { $suit }
 
-crazyeights-suit-chosen = O naipe agora é { $suit }.
+crazyeights-suit-chosen = Suit is now { $suit }.
 
-crazyeights-round-winner = { $player } ganha { $points } pontos. { $detail }
-crazyeights-round-points-from = { $points } de { $player }
+crazyeights-round-winner = { $player } wins { $points } points. { $detail }
+crazyeights-round-points-from = { $points } from { $player }
 
-crazyeights-game-winner = { $player } vence com { $score } pontos.
+crazyeights-game-winner = { $player } wins with { $score } points.
 
-crazyeights-player-plays = { $player } joga { $card }.
-crazyeights-player-draws-one = { $player } compra uma carta.
-crazyeights-player-draws-many = { $player } compra { $count } cartas.
-crazyeights-player-passes = { $player } passa.
+crazyeights-player-plays = { $player } plays { $card }.
+crazyeights-player-draws-one = { $player } draws a card.
+crazyeights-player-draws-many = { $player } draws { $count } cards.
+crazyeights-player-passes = { $player } passes.
