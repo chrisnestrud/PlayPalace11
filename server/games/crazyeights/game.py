@@ -349,7 +349,7 @@ class CrazyEightsGame(Game):
         turn_set.remove_by_prefix("play_card_")
         turn_set.remove("draw")
         turn_set.remove("pass")
-        if self.status != "playing" or player.is_spectator or self.current_player != player:
+        if self.status != "playing" or player.is_spectator:
             return
         for card in player.hand:
             turn_set.add(
@@ -363,24 +363,25 @@ class CrazyEightsGame(Game):
                     show_in_actions_menu=False,
                 )
             )
-        turn_set.add(
-            Action(
-                id="draw",
-                label=Localization.get(self._player_locale(player), "crazyeights-draw"),
-                handler="_action_draw",
-                is_enabled="_is_draw_enabled",
-                is_hidden="_is_draw_hidden",
+        if self.current_player == player:
+            turn_set.add(
+                Action(
+                    id="draw",
+                    label=Localization.get(self._player_locale(player), "crazyeights-draw"),
+                    handler="_action_draw",
+                    is_enabled="_is_draw_enabled",
+                    is_hidden="_is_draw_hidden",
+                )
             )
-        )
-        turn_set.add(
-            Action(
-                id="pass",
-                label=Localization.get(self._player_locale(player), "crazyeights-pass"),
-                handler="_action_pass",
-                is_enabled="_is_pass_enabled",
-                is_hidden="_is_pass_hidden",
+            turn_set.add(
+                Action(
+                    id="pass",
+                    label=Localization.get(self._player_locale(player), "crazyeights-pass"),
+                    handler="_action_pass",
+                    is_enabled="_is_pass_enabled",
+                    is_hidden="_is_pass_hidden",
+                )
             )
-        )
 
     # ==========================================================================
     # Game flow
