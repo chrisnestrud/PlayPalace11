@@ -7,6 +7,7 @@ import random
 from ..base import Game, Player, GameOptions
 from ..registry import register_game
 from ...game_utils.actions import Action, ActionSet, Visibility, EditboxInput
+from ...game_utils.poker_keybinds import setup_poker_keybinds
 from ...game_utils.bot_helper import BotHelper
 from ...game_utils.game_result import GameResult, PlayerResult
 from ...game_utils.options import IntOption, MenuOption, option_field
@@ -398,27 +399,22 @@ class HoldemGame(Game):
 
     def setup_keybinds(self) -> None:
         super().setup_keybinds()
-        self.define_keybind("p", "Check pot", ["check_pot"], include_spectators=True)
-        self.define_keybind("f", "Fold", ["fold"])
-        self.define_keybind("c", "Call/Check", ["call"])
-        self.define_keybind("r", "Raise", ["raise"])
-        self.define_keybind("shift+a", "All in", ["all_in"])
-        self.define_keybind("d", "Read hand", ["speak_hand"], include_spectators=False)
-        self.define_keybind("e", "Read table", ["speak_table"], include_spectators=True)
-        self.define_keybind("g", "Hand value", ["speak_hand_value"], include_spectators=False)
-        self.define_keybind("x", "Button", ["check_button"], include_spectators=True)
-        self.define_keybind("z", "Position", ["check_position"], include_spectators=True)
-        self.define_keybind("n", "Current bet", ["check_bet"], include_spectators=True)
-        self.define_keybind("m", "Minimum raise", ["check_min_raise"], include_spectators=True)
-        self.define_keybind("h", "Players in hand", ["check_hand_players"], include_spectators=True)
-        self.define_keybind("T", "Turn timer", ["check_turn_timer"], include_spectators=True)
-        self.define_keybind("v", "Blind timer", ["check_blind_timer"], include_spectators=True)
-        self.define_keybind("o", "Reveal both", ["reveal_both"], include_spectators=False)
-        self.define_keybind("u", "Reveal first", ["reveal_first"], include_spectators=False)
-        self.define_keybind("i", "Reveal second", ["reveal_second"], include_spectators=False)
-        self.define_keybind("w", "Read hand", ["speak_hand"], include_spectators=False)
-        for i in range(1, 8):
-            self.define_keybind(str(i), f"Read card {i}", [f"speak_card_{i}"], include_spectators=False)
+        setup_poker_keybinds(
+            self,
+            check_dealer="check_button",
+            dealer_label="Button",
+            check_position="check_position",
+            check_bet="check_bet",
+            check_min_raise="check_min_raise",
+            check_hand_players="check_hand_players",
+            check_turn_timer="check_turn_timer",
+            read_table="speak_table",
+            check_blind_timer="check_blind_timer",
+            reveal_both="reveal_both",
+            reveal_first="reveal_first",
+            reveal_second="reveal_second",
+            read_cards_count=7,
+        )
 
     # ==========================================================================
     # Game flow

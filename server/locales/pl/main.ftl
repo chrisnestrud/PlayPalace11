@@ -78,6 +78,8 @@ turn-sound-option = Dźwięk tury { $status }
 clear-kept-option = odznacz kostki po rzucie: { $status }
 dice-keeping-style-option = Styl zatrzymania kostek: { $style }
 dice-keeping-style-changed = styl zatrzymania kostek po rzucie zmieniony na { $style }.
+dice-keeping-style-indexes = Indeksy kości
+dice-keeping-style-values = Wartości kości
 
 # Bot names
 cancel = Anuluj

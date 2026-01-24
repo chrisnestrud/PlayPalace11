@@ -70,7 +70,7 @@ class ActionSetSystemMixin:
         return result
 
     def get_all_enabled_actions(self, player: "Player") -> list[ResolvedAction]:
-        """Get all enabled actions for a player (for F5 menu), in order."""
+        """Get all enabled actions for a player (for the actions menu), in order."""
         result = []
         for action_set in self.get_action_sets(player):
             result.extend(action_set.get_enabled_actions(self, player))

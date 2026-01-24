@@ -429,6 +429,7 @@ class YahtzeeGame(Game, DiceGameMixin):
         user = self.get_user(player)
         clear_kept = user.preferences.clear_kept_on_roll if user else True
         ytz_player.dice.roll(lock_kept=False, clear_kept=clear_kept)
+        self._apply_dice_values_defaults(ytz_player)
         ytz_player.rolls_left -= 1
 
         # Announce roll (v10 style: "You rolled: X. Rolls remaining: Y")
@@ -546,23 +547,20 @@ class YahtzeeGame(Game, DiceGameMixin):
             return
 
         if not ytz_current.dice.has_rolled:
-            user.speak_l("yahtzee-current-dice", dice="Not rolled yet")
+            user.speak_l("yahtzee-not-rolled")
+            return
+
+        dice_str = ytz_current.dice.format_values_only()
+        kept = [
+            str(ytz_current.dice.get_value(i))
+            for i in range(5)
+            if ytz_current.dice.is_kept(i)
+        ]
+        if kept:
+            kept_str = ", ".join(kept)
+            user.speak_l("yahtzee-your-dice-kept", dice=dice_str, kept=kept_str)
         else:
-            kept = [
-                str(ytz_current.dice.get_value(i))
-                for i in range(5)
-                if ytz_current.dice.is_kept(i)
-            ]
-            rolling = [
-                str(ytz_current.dice.get_value(i))
-                for i in range(5)
-                if not ytz_current.dice.is_kept(i)
-            ]
-
-            kept_str = ", ".join(kept) if kept else "none"
-            rolling_str = ", ".join(rolling) if rolling else "none"
-
-            user.speak_l("yahtzee-kept-dice", kept=kept_str, rolling=rolling_str)
+            user.speak_l("yahtzee-your-dice", dice=dice_str)
 
     def _action_view_scoresheet(self, player: Player, action_id: str) -> None:
         """View scoresheet."""

@@ -7,6 +7,7 @@ import random
 from ..base import Game, Player, GameOptions
 from ..registry import register_game
 from ...game_utils.actions import Action, ActionSet, Visibility, EditboxInput
+from ...game_utils.poker_keybinds import setup_poker_keybinds
 from ...game_utils.bot_helper import BotHelper
 from ...game_utils.game_result import GameResult, PlayerResult
 from ...game_utils.options import IntOption, MenuOption, option_field
@@ -22,7 +23,6 @@ from ...game_utils.poker_state import order_after_button
 from ...game_utils.poker_showdown import order_winners_by_button, format_showdown_lines
 from ...game_utils.poker_payout import resolve_pot
 from ...messages.localization import Localization
-from ...users.preferences import DiceKeepingStyle
 from ...ui.keybinds import KeybindState
 from .bot import bot_think
 
@@ -244,15 +244,8 @@ class FiveCardDrawGame(Game):
                     handler="_action_card_key",
                     is_enabled="_is_discard_toggle_enabled",
                     is_hidden="_is_always_hidden",
-                )
-            )
-            action_set.add(
-                Action(
-                    id=f"card_discard_{i}",
-                    label=f"Discard card {i}",
-                    handler="_action_card_discard",
-                    is_enabled="_is_discard_toggle_enabled",
-                    is_hidden="_is_always_hidden",
+                    get_label="_get_card_key_label",
+                    show_in_actions_menu=True,
                 )
             )
         for i in range(1, 6):
@@ -264,6 +257,7 @@ class FiveCardDrawGame(Game):
                     is_enabled="_is_discard_toggle_enabled",
                     is_hidden="_is_discard_toggle_hidden",
                     get_label="_get_toggle_discard_label",
+                    show_in_actions_menu=False,
                 )
             )
         return action_set
@@ -361,37 +355,29 @@ class FiveCardDrawGame(Game):
                     handler="_action_read_card",
                     is_enabled="_is_check_enabled",
                     is_hidden="_is_always_hidden",
+                    show_in_actions_menu=False,
                 )
             )
         return action_set
 
     def setup_keybinds(self) -> None:
         super().setup_keybinds()
-        self.define_keybind("p", "Check pot", ["check_pot"], include_spectators=True)
-        self.define_keybind("f", "Fold", ["fold"])
-        self.define_keybind("c", "Call/Check", ["call"])
-        self.define_keybind("r", "Raise", ["raise"])
-        self.define_keybind("shift+a", "All in", ["all_in"])
-        self.define_keybind("d", "Read hand", ["speak_hand"], include_spectators=False)
-        self.define_keybind("g", "Hand value", ["speak_hand_value"], include_spectators=False)
-        self.define_keybind("x", "Dealer", ["check_dealer"], include_spectators=True)
-        self.define_keybind("z", "Position", ["check_position"], include_spectators=True)
-        self.define_keybind("b", "Current bet", ["check_bet"], include_spectators=True)
-        self.define_keybind("m", "Minimum raise", ["check_min_raise"], include_spectators=True)
-        self.define_keybind("h", "Players in hand", ["check_hand_players"], include_spectators=True)
-        self.define_keybind("T", "Turn timer", ["check_turn_timer"], include_spectators=True)
-        self.define_keybind("v", "Raise mode", ["check_raise_mode"], include_spectators=True)
+        setup_poker_keybinds(
+            self,
+            check_dealer="check_dealer",
+            dealer_label="Dealer",
+            check_position="check_position",
+            check_bet="check_bet",
+            check_min_raise="check_min_raise",
+            check_hand_players="check_hand_players",
+            check_turn_timer="check_turn_timer",
+            draw_cards="draw_cards",
+        )
         for i in range(1, 6):
             self.define_keybind(
                 str(i),
                 f"Card key {i}",
                 [f"card_key_{i}"],
-                state=KeybindState.ACTIVE,
-            )
-            self.define_keybind(
-                f"shift+{i}",
-                f"Discard card {i}",
-                [f"card_discard_{i}"],
                 state=KeybindState.ACTIVE,
             )
 
@@ -1013,7 +999,11 @@ class FiveCardDrawGame(Game):
         order = [p.id for p in active]
         if dealer_id and player.id in order:
             idx = (order.index(player.id) - order.index(dealer_id)) % len(order)
-            user.speak_l("poker-position-dealer", position=idx)
+            if idx == 0:
+                user.speak_l("poker-position-dealer")
+            else:
+                key = "poker-position-dealer-seat" if idx == 1 else "poker-position-dealer-seats"
+                user.speak_l(key, position=idx)
 
     # ==========================================================================
     # Helpers
@@ -1039,7 +1029,7 @@ class FiveCardDrawGame(Game):
 
     def _is_draw_enabled(self, player: Player) -> str | None:
         if self.phase != "draw":
-            return "action-not-playing"
+            return "draw-not-draw-phase"
         return self._is_turn_action_enabled(player)
 
     def _is_draw_hidden(self, player: Player) -> Visibility:
@@ -1058,6 +1048,11 @@ class FiveCardDrawGame(Game):
         return self._is_turn_action_hidden(player)
 
     def _is_discard_toggle_enabled(self, player: Player) -> str | None:
+        if self.phase != "draw":
+            return "action-not-playing"
+        return self._is_turn_action_enabled(player)
+
+    def _is_discard_key_enabled(self, player: Player) -> str | None:
         if self.phase != "draw":
             return "action-not-playing"
         return self._is_turn_action_enabled(player)
@@ -1096,10 +1091,24 @@ class FiveCardDrawGame(Game):
         name = card_name(p.hand[idx], locale)
         if idx in p.to_discard:
             return Localization.get(locale, "draw-card-discard", card=name)
-        style = user.preferences.dice_keeping_style if user else DiceKeepingStyle.PLAYPALACE
-        if style == DiceKeepingStyle.QUENTIN_C:
-            return name
         return Localization.get(locale, "draw-card-keep", card=name)
+
+    def _get_card_key_label(self, player: Player, action_id: str) -> str:
+        p = player if isinstance(player, FiveCardDrawPlayer) else None
+        if not p:
+            return action_id
+        try:
+            idx = int(action_id.split("_")[-1]) - 1
+        except ValueError:
+            return action_id
+        if idx < 0 or idx >= len(p.hand):
+            return action_id
+        user = self.get_user(player)
+        locale = user.locale if user else "en"
+        name = card_name(p.hand[idx], locale)
+        if idx in p.to_discard:
+            return Localization.get(locale, "draw-card-keep", card=name)
+        return Localization.get(locale, "draw-card-discard", card=name)
 
     def _get_draw_label(self, player: Player, action_id: str) -> str:
         p = player if isinstance(player, FiveCardDrawPlayer) else None
@@ -1144,31 +1153,7 @@ class FiveCardDrawGame(Game):
             return
         if idx < 0 or idx >= len(p.hand):
             return
-        user = self.get_user(player)
-        style = user.preferences.dice_keeping_style if user else DiceKeepingStyle.PLAYPALACE
-        if style == DiceKeepingStyle.QUENTIN_C:
-            self._set_discard(p, idx, discard=False)
-        else:
-            self._set_discard(p, idx, discard=idx not in p.to_discard)
-        self.update_player_menu(p)
-        self._announce_discard_status(p, idx)
-
-    def _action_card_discard(self, player: Player, action_id: str) -> None:
-        p = self._require_active_player(player)
-        if not p or self.phase != "draw":
-            return
-        try:
-            idx = int(action_id.split("_")[-1]) - 1
-        except ValueError:
-            return
-        if idx < 0 or idx >= len(p.hand):
-            return
-        user = self.get_user(player)
-        style = user.preferences.dice_keeping_style if user else DiceKeepingStyle.PLAYPALACE
-        if style == DiceKeepingStyle.QUENTIN_C:
-            self._set_discard(p, idx, discard=True)
-        else:
-            self._set_discard(p, idx, discard=idx not in p.to_discard)
+        self._set_discard(p, idx, discard=idx not in p.to_discard)
         self.update_player_menu(p)
         self._announce_discard_status(p, idx)
 
@@ -1183,6 +1168,9 @@ class FiveCardDrawGame(Game):
     def _handle_turn_timeout(self) -> None:
         player = self.current_player
         if not isinstance(player, FiveCardDrawPlayer):
+            return
+        if self.phase == "draw":
+            self._action_draw_cards(player, "draw_cards")
             return
         self._action_fold(player, "fold")
 

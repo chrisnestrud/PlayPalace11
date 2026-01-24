@@ -20,6 +20,7 @@ from .action_set_creation_mixin import ActionSetCreationMixin
 from .action_execution_mixin import ActionExecutionMixin
 from .options import OptionsHandlerMixin
 from .action_set_system_mixin import ActionSetSystemMixin
+from .poker_keybinds import setup_poker_keybinds
 
 __all__ = [
     "Action",
@@ -51,4 +52,5 @@ __all__ = [
     "ActionExecutionMixin",
     "OptionsHandlerMixin",
     "ActionSetSystemMixin",
+    "setup_poker_keybinds",
 ]

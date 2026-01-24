@@ -80,6 +80,8 @@ turn-sound-option = Turn sound: { $status }
 clear-kept-option = Clear kept dice when rolling: { $status }
 dice-keeping-style-option = Dice keeping style: { $style }
 dice-keeping-style-changed = Dice keeping style set to { $style }.
+dice-keeping-style-indexes = Dice indexes
+dice-keeping-style-values = Dice values
 
 # Bot names
 cancel = Cancel

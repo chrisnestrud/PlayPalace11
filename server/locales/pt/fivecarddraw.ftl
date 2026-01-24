@@ -26,10 +26,11 @@ draw-antes-posted = Antes posted: { $amount }.
 draw-betting-round-1 = Betting round.
 draw-betting-round-2 = Betting round.
 draw-begin-draw = Draw phase.
+draw-not-draw-phase = Não é hora de comprar cartas.
 draw-not-betting = Você não pode apostar durante a fase de troca.
 
 draw-toggle-discard = Toggle discard for card { $index }
-draw-card-keep = { $card }
+draw-card-keep = Manter { $card }
 draw-card-discard = Descartar { $card }
 draw-card-kept = Manter { $card }.
 draw-card-discarded = Descartar { $card }.

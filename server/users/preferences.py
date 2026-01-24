@@ -7,8 +7,8 @@ from enum import Enum
 class DiceKeepingStyle(Enum):
     """Dice keeping style preference."""
 
-    PLAYPALACE = "playpalace"  # Keep by index (1-5 keys)
-    QUENTIN_C = "quentin_c"  # Keep by face value (1-6 keys)
+    PLAYPALACE = "playpalace"  # Dice indexes (1-5 keys)
+    QUENTIN_C = "quentin_c"  # Dice values (1-6 keys)
 
     @classmethod
     def from_str(cls, value: str) -> "DiceKeepingStyle":

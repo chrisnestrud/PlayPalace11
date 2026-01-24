@@ -445,8 +445,8 @@ class Server:
 
     # Dice keeping style display names
     DICE_KEEPING_STYLES = {
-        DiceKeepingStyle.PLAYPALACE: "PlayPalace style",
-        DiceKeepingStyle.QUENTIN_C: "Quentin C style",
+        DiceKeepingStyle.PLAYPALACE: "dice-keeping-style-indexes",
+        DiceKeepingStyle.QUENTIN_C: "dice-keeping-style-values",
     }
 
     def _show_options_menu(self, user: NetworkUser) -> None:
@@ -468,9 +468,10 @@ class Server:
         )
 
         # Dice keeping style option
-        dice_style_name = self.DICE_KEEPING_STYLES.get(
-            prefs.dice_keeping_style, "PlayPalace style"
+        style_key = self.DICE_KEEPING_STYLES.get(
+            prefs.dice_keeping_style, "dice-keeping-style-indexes"
         )
+        dice_style_name = Localization.get(user.locale, style_key)
 
         items = [
             MenuItem(
@@ -679,8 +680,9 @@ class Server:
         """Show dice keeping style selection menu."""
         items = []
         current_style = user.preferences.dice_keeping_style
-        for style, name in self.DICE_KEEPING_STYLES.items():
+        for style, name_key in self.DICE_KEEPING_STYLES.items():
             prefix = "* " if style == current_style else ""
+            name = Localization.get(user.locale, name_key)
             items.append(MenuItem(text=f"{prefix}{name}", id=f"style_{style.value}"))
         items.append(MenuItem(text=Localization.get(user.locale, "back"), id="back"))
         user.show_menu(
@@ -700,7 +702,8 @@ class Server:
             style = DiceKeepingStyle.from_str(style_value)
             user.preferences.dice_keeping_style = style
             self._save_user_preferences(user)
-            style_name = self.DICE_KEEPING_STYLES.get(style, "PlayPalace style")
+            style_key = self.DICE_KEEPING_STYLES.get(style, "dice-keeping-style-indexes")
+            style_name = Localization.get(user.locale, style_key)
             user.speak_l("dice-keeping-style-changed", style=style_name)
             self._show_options_menu(user)
             return

@@ -80,6 +80,8 @@ turn-sound-option = Âm thanh báo lượt: { $status }
 clear-kept-option = Bỏ chọn xúc xắc đã giữ khi gieo lại: { $status }
 dice-keeping-style-option = Kiểu giữ xúc xắc: { $style }
 dice-keeping-style-changed = Kiểu giữ xúc xắc đã đặt là { $style }.
+dice-keeping-style-indexes = Chỉ số xúc xắc
+dice-keeping-style-values = Giá trị xúc xắc
 
 # Tên Bot
 cancel = Hủy

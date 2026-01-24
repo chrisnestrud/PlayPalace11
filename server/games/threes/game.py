@@ -271,6 +271,7 @@ class ThreesGame(Game, DiceGameMixin):
         # Roll dice (locks kept dice and rerolls unlocked)
         self.play_sound("game_pig/roll.ogg")
         player.dice.roll()
+        self._apply_dice_values_defaults(player)
 
         # Announce roll
         dice_str = player.dice.format_values_only()

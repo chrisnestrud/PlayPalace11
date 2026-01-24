@@ -377,7 +377,7 @@ class FarkleGame(Game):
             )
         )
 
-        # Check turn score (F5 menu only)
+        # Check turn score (actions menu only)
         action_set.add(
             Action(
                 id="check_turn_score",

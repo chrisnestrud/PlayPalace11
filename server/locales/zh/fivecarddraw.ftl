@@ -26,10 +26,11 @@ draw-antes-posted = Antes posted: { $amount }.
 draw-betting-round-1 = Betting round.
 draw-betting-round-2 = Betting round.
 draw-begin-draw = Draw phase.
+draw-not-draw-phase = 现在不能抽牌。
 draw-not-betting = 抽牌阶段不能下注。
 
 draw-toggle-discard = Toggle discard for card { $index }
-draw-card-keep = { $card }
+draw-card-keep = 保留{ $card }
 draw-card-discard = 弃掉{ $card }
 draw-card-kept = 保留{ $card }。
 draw-card-discarded = 弃掉{ $card }。

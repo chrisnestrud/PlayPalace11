@@ -200,7 +200,7 @@ class LobbyActionsMixin:
             self.rebuild_all_menus()
 
     def _action_show_actions_menu(self, player: "Player", action_id: str) -> None:
-        """Show the F5 actions menu."""
+        """Show the actions menu."""
         items = []
         for resolved in self.get_all_enabled_actions(player):
             label = resolved.label

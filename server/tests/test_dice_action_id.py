@@ -37,8 +37,9 @@ class TestActionIdPassing:
         assert "toggle_die_4" in visible_ids
 
         # All should be enabled (assuming more than 1 unlocked die)
-        enabled_actions = game.get_all_enabled_actions(player)
-        enabled_ids = [a.action.id for a in enabled_actions]
+        turn_set = game.get_action_set(player, "turn")
+        resolved = turn_set.resolve_actions(game, player) if turn_set else []
+        enabled_ids = [a.action.id for a in resolved if a.enabled]
 
         if player.dice.unlocked_count > 1:
             assert "toggle_die_0" in enabled_ids
@@ -70,8 +71,9 @@ class TestActionIdPassing:
         assert "toggle_die_5" in visible_ids  # This is the critical one
 
         # All should be enabled (no dice locked yet)
-        enabled_actions = game.get_all_enabled_actions(player)
-        enabled_ids = [a.action.id for a in enabled_actions]
+        turn_set = game.get_action_set(player, "turn")
+        resolved = turn_set.resolve_actions(game, player) if turn_set else []
+        enabled_ids = [a.action.id for a in resolved if a.enabled]
 
         assert "toggle_die_0" in enabled_ids
         assert "toggle_die_1" in enabled_ids
@@ -132,7 +134,8 @@ class TestActionIdPassing:
 
         # These should work without errors
         visible = game.get_all_visible_actions(player)
-        enabled = game.get_all_enabled_actions(player)
+        turn_set = game.get_action_set(player, "turn")
+        enabled = turn_set.resolve_actions(game, player) if turn_set else []
 
         assert len(visible) > 0
         assert len(enabled) > 0

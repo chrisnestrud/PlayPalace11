@@ -192,6 +192,7 @@ class MidnightGame(Game, DiceGameMixin):
 
         # Roll dice (locks kept dice)
         midnight_player.dice.roll(lock_kept=True, clear_kept=True)
+        self._apply_dice_values_defaults(midnight_player)
 
         # Format roll results
         result_text = ", ".join(str(v) for v in midnight_player.dice.values)
@@ -582,4 +583,3 @@ class MidnightGame(Game, DiceGameMixin):
             lines.append(f"{i}. {name}: {wins} round wins")
 
         return lines
-

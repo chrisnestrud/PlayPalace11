@@ -22,8 +22,8 @@ class DiceGameMixin:
     Mixin providing dice toggle actions for games using DiceSet.
 
     Supports two dice keeping styles:
-    - PlayPalace style: Keys 1-5 toggle dice by index
-    - Quentin C style: Keys 1-6 keep by face value, shift+1-6 unkeep by value
+    - Dice indexes: Keys 1-5 toggle dice by index
+    - Dice values: Keys 1-6 reroll by face value, shift+1-6 keep by value
 
     Expects the game class to have:
     - self.get_user(player) -> User
@@ -70,6 +70,7 @@ class DiceGameMixin:
                     is_enabled=f"_is_toggle_die_{i}_enabled",
                     is_hidden=f"_is_toggle_die_{i}_hidden",
                     get_label=f"_get_toggle_die_{i}_label",
+                    show_in_actions_menu=False,
                 )
             )
 
@@ -83,16 +84,20 @@ class DiceGameMixin:
                     handler="_action_dice_key",
                     is_enabled="_is_dice_key_enabled",
                     is_hidden="_is_dice_key_hidden",
+                    get_label="_get_dice_key_label",
+                    show_in_actions_menu=True,
                 )
             )
-            # Shift+key actions for Quentin C style unkeeping
+            # Shift+key actions for dice values style keeping
             action_set.add(
                 Action(
                     id=f"dice_unkeep_{v}",
                     label=f"Unkeep {v}",
                     handler="_action_dice_unkeep",
-                    is_enabled="_is_dice_key_enabled",
+                    is_enabled="_is_dice_unkeep_enabled",
                     is_hidden="_is_dice_key_hidden",
+                    get_label="_get_dice_unkeep_label",
+                    show_in_actions_menu=True,
                 )
             )
 
@@ -102,7 +107,7 @@ class DiceGameMixin:
 
         Defines keybinds for both styles:
         - Keys 1-6 trigger dice_key_X (style determines behavior)
-        - Shift+1-6 trigger dice_unkeep_X (Quentin C style only)
+        - Shift+1-6 trigger dice_unkeep_X (dice values style only)
 
         Args:
             num_dice: Number of dice (default 5).
@@ -127,11 +132,126 @@ class DiceGameMixin:
     # Default is_enabled / is_hidden implementations (games can override)
     # ==========================================================================
 
-    def _is_dice_key_enabled(self, player: Player) -> str | None:
-        """Dice keybind actions are always enabled during play."""
+    def _is_dice_key_enabled(self, player: Player, *, action_id: str | None = None) -> str | None:
+        """Enable dice keybind actions based on game state and keeping style."""
         if self.status != "playing":
             return "action-not-playing"
+        if not action_id:
+            return None
+        user = self.get_user(player)
+        style = user.preferences.dice_keeping_style if user else DiceKeepingStyle.PLAYPALACE
+        try:
+            key_num = int(action_id.split("_")[-1])
+        except ValueError:
+            return "action-not-available"
+        if hasattr(player, "dice"):
+            if style == DiceKeepingStyle.QUENTIN_C:
+                if key_num > player.dice.sides:
+                    return "action-not-available"
+            elif key_num > player.dice.num_dice:
+                return "action-not-available"
+        if hasattr(self, "_is_dice_toggle_enabled"):
+            if style == DiceKeepingStyle.PLAYPALACE:
+                die_index = key_num - 1
+            else:
+                die_index = 0
+            if hasattr(player, "dice") and die_index >= player.dice.num_dice:
+                return "action-not-available"
+            toggle_reason = self._is_dice_toggle_enabled(player, die_index)
+            if toggle_reason is not None:
+                return "action-not-available"
+        if style == DiceKeepingStyle.QUENTIN_C and hasattr(player, "dice"):
+            if not self._has_kept_value(player, key_num):
+                return "action-not-available"
         return None
+
+    def _is_dice_unkeep_enabled(self, player: Player, *, action_id: str | None = None) -> str | None:
+        """Only enable unkeep keybinds for dice values style."""
+        if self.status != "playing":
+            return "action-not-playing"
+        user = self.get_user(player)
+        style = user.preferences.dice_keeping_style if user else DiceKeepingStyle.PLAYPALACE
+        if style != DiceKeepingStyle.QUENTIN_C:
+            return "action-not-available"
+        if action_id:
+            try:
+                key_num = int(action_id.split("_")[-1])
+            except ValueError:
+                return "action-not-available"
+            if hasattr(player, "dice") and key_num > player.dice.sides:
+                return "action-not-available"
+        if hasattr(self, "_is_dice_toggle_enabled"):
+            toggle_reason = self._is_dice_toggle_enabled(player, 0)
+            if toggle_reason is not None:
+                return "action-not-available"
+        if hasattr(player, "dice"):
+            if not self._has_unkept_value(player, key_num):
+                return "action-not-available"
+        return None
+
+    def _get_dice_key_label(self, player: Player, action_id: str) -> str:
+        """Label for dice_key actions in the actions menu."""
+        try:
+            key_num = int(action_id.split("_")[-1])
+        except ValueError:
+            return action_id
+        user = self.get_user(player)
+        style = user.preferences.dice_keeping_style if user else DiceKeepingStyle.PLAYPALACE
+        if style == DiceKeepingStyle.PLAYPALACE and hasattr(player, "dice"):
+            die_index = key_num - 1
+            if die_index >= player.dice.num_dice:
+                return f"Keep die {key_num}"
+            if player.dice.is_kept(die_index):
+                return f"Reroll die {key_num}"
+            return f"Keep die {key_num}"
+        return f"Reroll {key_num}"
+
+    def _get_dice_unkeep_label(self, player: Player, action_id: str) -> str:
+        """Label for dice_unkeep actions in the actions menu."""
+        try:
+            key_num = int(action_id.split("_")[-1])
+        except ValueError:
+            return action_id
+        return f"Keep {key_num}"
+
+    def _apply_dice_values_defaults(self, player: Player) -> None:
+        """In dice values style, default to keeping all dice after a roll."""
+        user = self.get_user(player)
+        style = user.preferences.dice_keeping_style if user else DiceKeepingStyle.PLAYPALACE
+        if style != DiceKeepingStyle.QUENTIN_C:
+            return
+        if not hasattr(player, "dice"):
+            return
+        dice = player.dice
+        if not dice.has_rolled:
+            return
+        dice.kept = list(range(dice.num_dice))
+
+    def _has_kept_value(self, player: Player, value: int) -> bool:
+        if not hasattr(player, "dice"):
+            return False
+        dice = player.dice
+        if not dice.has_rolled:
+            return False
+        for i in range(dice.num_dice):
+            if dice.is_locked(i) or not dice.is_kept(i):
+                continue
+            if dice.get_value(i) == value:
+                return True
+        return False
+
+    def _has_unkept_value(self, player: Player, value: int) -> bool:
+        if not hasattr(player, "dice"):
+            return False
+        dice = player.dice
+        if not dice.has_rolled:
+            return False
+        for i in range(dice.num_dice):
+            if dice.is_locked(i) or dice.is_kept(i):
+                continue
+            if dice.get_value(i) == value:
+                return True
+        return False
 
     def _is_dice_key_hidden(self, player: Player) -> Visibility:
         """Dice keybind actions are always hidden (keybind only)."""
@@ -279,8 +399,8 @@ class DiceGameMixin:
         Handle a dice key press (1-6).
 
         Behavior depends on user's dice keeping style preference:
-        - PlayPalace style: Toggle die at index (key_num - 1)
-        - Quentin C style: Keep first unkept die with face value key_num
+        - Dice indexes: Toggle die at index (key_num - 1)
+        - Dice values: Reroll first kept die with face value key_num
         """
         user = self.get_user(player)
         if not user:
@@ -294,14 +414,14 @@ class DiceGameMixin:
             if hasattr(player, "dice") and die_index < player.dice.num_dice:
                 self._toggle_die(player, die_index)
         else:
-            # Quentin C style: keep by face value
-            self._keep_by_value(player, key_num)
+            # Dice values style: reroll by face value
+            self._unkeep_by_value(player, key_num)
 
     def _handle_dice_unkeep(self, player: Player, value: int) -> None:
         """
         Handle shift+key press for unkeeping by value.
 
-        Only works in Quentin C style. Silent in PlayPalace style.
+        Only works in dice values style. Silent in dice indexes style.
         """
         user = self.get_user(player)
         if not user:
@@ -310,8 +430,8 @@ class DiceGameMixin:
         style = user.preferences.dice_keeping_style
 
         if style == DiceKeepingStyle.QUENTIN_C:
-            self._unkeep_by_value(player, value)
-        # Silent in PlayPalace style
+            self._keep_by_value(player, value)
+        # Silent in dice indexes style
 
     def _toggle_die(self, player: Player, die_index: int) -> None:
         """
@@ -348,7 +468,7 @@ class DiceGameMixin:
         """
         Keep the first unkept die with the given face value.
 
-        Used in Quentin C style. Silent if no unkept die with that value exists.
+        Used in dice values style. Silent if no unkept die with that value exists.
         """
         if not hasattr(player, "dice"):
             return
@@ -372,7 +492,7 @@ class DiceGameMixin:
         """
         Unkeep the first kept die with the given face value.
 
-        Used in Quentin C style. Silent if no kept die with that value exists.
+        Used in dice values style. Silent if no kept die with that value exists.
         """
         if not hasattr(player, "dice"):
             return

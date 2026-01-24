@@ -74,6 +74,8 @@ turn-sound-option = 回合提示音：{ $status }
 clear-kept-option = 掷骰时清除保留的骰子：{ $status }
 dice-keeping-style-option = 骰子保留风格：{ $style }
 dice-keeping-style-changed = 骰子保留风格已设置为 { $style }。
+dice-keeping-style-indexes = 骰子索引
+dice-keeping-style-values = 骰子点数
 
 # 机器人名称
 cancel = 取消

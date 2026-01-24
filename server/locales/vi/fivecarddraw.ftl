@@ -26,10 +26,11 @@ draw-antes-posted = Đã đặt cược đáy: { $amount }.
 draw-betting-round-1 = Vòng cược.
 draw-betting-round-2 = Vòng cược.
 draw-begin-draw = Giai đoạn đổi bài.
+draw-not-draw-phase = Chưa đến lúc rút bài.
 draw-not-betting = Bạn không thể cược trong giai đoạn đổi bài.
 
 draw-toggle-discard = Chọn bỏ lá bài thứ { $index }
-draw-card-keep = { $card }
+draw-card-keep = Giữ { $card }
 draw-card-discard = Bỏ { $card }
 draw-card-kept = Giữ { $card }.
 draw-card-discarded = Bỏ { $card }.

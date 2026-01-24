@@ -68,7 +68,7 @@ class EventHandlingMixin:
                         self.rebuild_all_menus()
 
         elif menu_id == "actions_menu":
-            # F5 menu - use selection_id directly
+            # Actions menu - use selection_id directly
             if selection_id:
                 self._handle_actions_menu_selection(player, selection_id)
 
@@ -178,10 +178,11 @@ class EventHandlingMixin:
                         self.execute_action(player, action_id, context=context)
                         executed_any = True
                     elif resolved.disabled_reason:
-                        # Speak the disabled reason to the player
-                        user = self.get_user(player)
-                        if user:
-                            user.speak_l(resolved.disabled_reason)
+                        if resolved.disabled_reason != "action-not-available":
+                            # Speak the disabled reason to the player
+                            user = self.get_user(player)
+                            if user:
+                                user.speak_l(resolved.disabled_reason)
 
         # Don't rebuild if action is waiting for input, status box is open, or actions menu is open
         if (
@@ -193,7 +194,7 @@ class EventHandlingMixin:
             self.rebuild_all_menus()
 
     def _handle_actions_menu_selection(self, player: "Player", action_id: str) -> None:
-        """Handle selection from the F5 actions menu."""
+        """Handle selection from the actions menu."""
         # Actions menu is no longer open
         self._actions_menu_open.discard(player.id)
         # Handle "go back" - just return to turn menu

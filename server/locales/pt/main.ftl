@@ -74,6 +74,8 @@ turn-sound-option = Som de turno: { $status }
 clear-kept-option = Limpar dados mantidos ao rolar: { $status }
 dice-keeping-style-option = Estilo de manter dados: { $style }
 dice-keeping-style-changed = Estilo de manter dados definido para { $style }.
+dice-keeping-style-indexes = Índices dos dados
+dice-keeping-style-values = Valores dos dados
 
 # Nomes de bots
 cancel = Cancelar

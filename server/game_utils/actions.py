@@ -74,6 +74,7 @@ class Action(DataClassJSONMixin):
     is_hidden: str  # Method name (e.g., "_is_roll_hidden")
     get_label: str | None = None  # Optional method name (e.g., "_get_roll_label")
     input_request: MenuInput | EditboxInput | None = None
+    show_in_actions_menu: bool = True
 
 
 @dataclass
@@ -198,8 +199,12 @@ class ActionSet(DataClassJSONMixin):
     def get_enabled_actions(
         self, game: "Game", player: "Player"
     ) -> list[ResolvedAction]:
-        """Get all enabled actions for F5 menu (includes hidden)."""
-        return [ra for ra in self.resolve_actions(game, player) if ra.enabled]
+        """Get all enabled actions for the actions menu (includes hidden)."""
+        return [
+            ra
+            for ra in self.resolve_actions(game, player)
+            if ra.enabled and ra.action.show_in_actions_menu
+        ]
 
     def get_all_actions(
         self, game: "Game", player: "Player"
