@@ -139,6 +139,7 @@ class ActionSetCreationMixin:
                 handler="_action_whos_at_table",
                 is_enabled="_is_whos_at_table_enabled",
                 is_hidden="_is_whos_at_table_hidden",
+                show_in_actions_menu=False,
             )
         )
         action_set.add(
