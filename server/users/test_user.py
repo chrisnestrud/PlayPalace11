@@ -21,10 +21,11 @@ class MockUser(User):
     Used in unit tests and play tests to verify game behavior.
     """
 
-    def __init__(self, username: str, locale: str = "en", uuid: str | None = None):
+    def __init__(self, username: str, locale: str = "en", uuid: str | None = None, approved: bool = True):
         self._uuid = uuid or generate_uuid()
         self._username = username
         self._locale = locale
+        self._approved = approved
         self.messages: list[Message] = []
         self.menus: dict[str, dict[str, Any]] = {}
         self.editboxes: dict[str, dict[str, Any]] = {}
@@ -40,6 +41,10 @@ class MockUser(User):
     @property
     def locale(self) -> str:
         return self._locale
+
+    @property
+    def approved(self) -> bool:
+        return self._approved
 
     def speak(self, text: str, buffer: str = "misc") -> None:
         self.messages.append(Message("speak", {"text": text, "buffer": buffer}))

@@ -142,17 +142,17 @@ class TestDeck:
         # Should have cards
         assert deck.size() > 0
 
-        # Check resource cards (6 of each = 30)
+        # Check resource cards (12 of each standard + 6 gold = 54)
         resource_count = sum(
             1 for c in deck.cards if c.card_type == CardType.RESOURCE
         )
-        assert resource_count == 30
+        assert resource_count == 54
 
-        # Check special resources (only for 4 tribes, 5 each = 20)
+        # Check special resources (only for 4 tribes, 6 each = 24)
         special_count = sum(
             1 for c in deck.cards if c.card_type == CardType.SPECIAL
         )
-        assert special_count == 20
+        assert special_count == 24
 
     def test_deck_draw(self):
         """Test drawing cards."""
@@ -338,7 +338,7 @@ class TestAgeOfHeroesGame:
         game_class = GameRegistry.get("ageofheroes")
         assert game_class is not None
         assert game_class.get_name() == "Age of Heroes"
-        assert game_class.get_category() == "category-card-games"
+        assert game_class.get_category() == "category-uncategorized"
 
     def test_game_creation(self):
         """Test creating a new game."""

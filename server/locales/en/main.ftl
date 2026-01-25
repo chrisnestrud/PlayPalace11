@@ -71,9 +71,12 @@ goodbye = Goodbye!
 # User presence announcements
 user-online = { $player } came online.
 user-offline = { $player } went offline.
+user-is-admin = { $player } is an administrator of PlayPalace.
 online-users-none = No users online.
 online-users-one = 1 user: { $users }
 online-users-many = { $count } users: { $users }
+online-user-not-in-game = Not in game
+online-user-waiting-approval = Waiting for approval
 
 # Options
 language = Language
@@ -230,3 +233,21 @@ action-need-more-humans = Need more human players.
 confirm-leave-game = Are you sure you want to leave the table?
 confirm-yes = Yes
 confirm-no = No
+
+# Administration
+administration = Administration
+admin-menu-title = Administration
+
+# Account approval
+account-approval = Account Approval
+account-approval-menu-title = Account Approval
+no-pending-accounts = No pending accounts.
+approve-account = Approve
+decline-account = Decline
+account-approved = { $player }'s account has been approved.
+account-declined = { $player }'s account has been declined and deleted.
+
+# Waiting for approval (shown to unapproved users)
+waiting-for-approval = Your account is waiting for approval by an administrator. Please wait...
+account-approved-welcome = Your account has been approved! Welcome to PlayPalace.
+account-declined-goodbye = Your account request has been declined.

@@ -23,12 +23,16 @@ class NetworkUser(User):
         connection: "ClientConnection",
         uuid: str | None = None,
         preferences: UserPreferences | None = None,
+        trust_level: int = 1,
+        approved: bool = False,
     ):
         self._uuid = uuid or generate_uuid()
         self._username = username
         self._locale = locale
         self._connection = connection
         self._preferences = preferences or UserPreferences()
+        self._trust_level = trust_level
+        self._approved = approved
         self._message_queue: list[dict[str, Any]] = []
 
         # Track current UI state for session resumption
@@ -51,6 +55,18 @@ class NetworkUser(User):
     def set_locale(self, locale: str) -> None:
         """Set the user's locale."""
         self._locale = locale
+
+    @property
+    def trust_level(self) -> int:
+        return self._trust_level
+
+    @property
+    def approved(self) -> bool:
+        return self._approved
+
+    def set_approved(self, approved: bool) -> None:
+        """Set the user's approval status."""
+        self._approved = approved
 
     @property
     def preferences(self) -> UserPreferences:

@@ -77,12 +77,22 @@ class AuthManager:
         Register a new user.
 
         Returns True if registration successful, False if username taken.
+        The first user ever registered becomes an admin (trust level 2) and is auto-approved.
         """
         if self._db.user_exists(username):
             return False
 
+        # Check if this is the first user - they become admin and are auto-approved
+        is_first_user = self._db.get_user_count() == 0
+        trust_level = 2 if is_first_user else 1
+        approved = is_first_user  # First user is auto-approved
+
         password_hash = self.hash_password(password)
-        self._db.create_user(username, password_hash, locale)
+        self._db.create_user(username, password_hash, locale, trust_level, approved)
+
+        if is_first_user:
+            print(f"User '{username}' is the first user and has been granted admin (trust level 2).")
+
         return True
 
     def reset_password(self, username: str, new_password: str) -> bool:

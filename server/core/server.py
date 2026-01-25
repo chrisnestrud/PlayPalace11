@@ -73,6 +73,11 @@ class Server:
         self._db.connect()
         self._auth = AuthManager(self._db)
 
+        # Initialize trust levels for users
+        promoted_user = self._db.initialize_trust_levels()
+        if promoted_user:
+            print(f"User '{promoted_user}' has been promoted to admin (trust level 2).")
+
         # Load existing tables
         self._load_tables()
 
@@ -192,10 +197,20 @@ class Server:
     def _broadcast_presence_l(
         self, message_id: str, player_name: str, sound: str
     ) -> None:
-        """Broadcast a localized presence announcement to all online users with sound."""
+        """Broadcast a localized presence announcement to all approved online users with sound."""
         for username, user in self._users.items():
+            if not user.approved:
+                continue  # Don't send broadcasts to unapproved users
             user.speak_l(message_id, player=player_name)
             user.play_sound(sound)
+
+    def _broadcast_admin_announcement(self, admin_name: str) -> None:
+        """Broadcast an admin announcement to all approved online users."""
+        for username, user in self._users.items():
+            if not user.approved:
+                continue  # Don't send broadcasts to unapproved users
+            user.speak_l("user-is-admin", player=admin_name)
+            user.play_sound("ranked.ogg")
 
     async def _on_client_message(self, client: ClientConnection, packet: dict) -> None:
         """Handle incoming message from client."""
@@ -208,20 +223,28 @@ class Server:
         elif not client.authenticated:
             # Ignore non-auth packets from unauthenticated clients
             return
-        elif packet_type == "menu":
-            await self._handle_menu(client, packet)
-        elif packet_type == "keybind":
-            await self._handle_keybind(client, packet)
-        elif packet_type == "editbox":
-            await self._handle_editbox(client, packet)
-        elif packet_type == "chat":
-            await self._handle_chat(client, packet)
         elif packet_type == "ping":
+            # Always allow ping to keep connection alive
             await self._handle_ping(client)
-        elif packet_type == "list_online":
-            await self._handle_list_online(client)
-        elif packet_type == "list_online_with_games":
-            await self._handle_list_online_with_games(client)
+        else:
+            # For all other packets, check if user is approved
+            user = self._users.get(client.username)
+            if user and not user.approved:
+                # Unapproved users can only ping - drop all other packets
+                return
+
+            if packet_type == "menu":
+                await self._handle_menu(client, packet)
+            elif packet_type == "keybind":
+                await self._handle_keybind(client, packet)
+            elif packet_type == "editbox":
+                await self._handle_editbox(client, packet)
+            elif packet_type == "chat":
+                await self._handle_chat(client, packet)
+            elif packet_type == "list_online":
+                await self._handle_list_online(client)
+            elif packet_type == "list_online_with_games":
+                await self._handle_list_online_with_games(client)
 
     async def _handle_authorize(self, client: ClientConnection, packet: dict) -> None:
         """Handle authorization packet."""
@@ -250,6 +273,8 @@ class Server:
         user_record = self._auth.get_user(username)
         locale = user_record.locale if user_record else "en"
         user_uuid = user_record.uuid if user_record else None
+        trust_level = user_record.trust_level if user_record else 1
+        is_approved = user_record.approved if user_record else False
         preferences = UserPreferences()
         if user_record and user_record.preferences_json:
             try:
@@ -257,11 +282,18 @@ class Server:
                 preferences = UserPreferences.from_dict(prefs_data)
             except (json.JSONDecodeError, KeyError):
                 pass  # Use defaults on error
-        user = NetworkUser(username, locale, client, uuid=user_uuid, preferences=preferences)
+        user = NetworkUser(
+            username, locale, client, uuid=user_uuid, preferences=preferences,
+            trust_level=trust_level, approved=is_approved
+        )
         self._users[username] = user
 
         # Broadcast online announcement to all users (including the new user)
         self._broadcast_presence_l("user-online", username, "online.ogg")
+
+        # If user is an admin, announce that as well
+        if trust_level == 2:
+            self._broadcast_admin_announcement(username)
 
         # Send success response
         await client.send(
@@ -274,6 +306,12 @@ class Server:
 
         # Send game list
         await self._send_game_list(client)
+
+        # Check if user is approved
+        if not user.approved:
+            # User needs approval - show waiting screen
+            self._show_waiting_for_approval(user)
+            return
 
         # Check if user is in a table
         table = self._tables.find_user_table(username)
@@ -361,8 +399,13 @@ class Server:
                 text=Localization.get(user.locale, "my-stats"), id="my_stats"
             ),
             MenuItem(text=Localization.get(user.locale, "options"), id="options"),
-            MenuItem(text=Localization.get(user.locale, "logout"), id="logout"),
         ]
+        # Add administration menu for admins
+        if user.trust_level >= 2:
+            items.append(
+                MenuItem(text=Localization.get(user.locale, "administration"), id="administration")
+            )
+        items.append(MenuItem(text=Localization.get(user.locale, "logout"), id="logout"))
         user.show_menu(
             "main_menu",
             items,
@@ -602,6 +645,69 @@ class Server:
         )
         self._user_states[user.username] = {"menu": "language_menu"}
 
+    def _show_admin_menu(self, user: NetworkUser) -> None:
+        """Show administration menu."""
+        items = [
+            MenuItem(
+                text=Localization.get(user.locale, "account-approval"),
+                id="account_approval",
+            ),
+            MenuItem(text=Localization.get(user.locale, "back"), id="back"),
+        ]
+        user.show_menu(
+            "admin_menu",
+            items,
+            multiletter=True,
+            escape_behavior=EscapeBehavior.SELECT_LAST,
+        )
+        self._user_states[user.username] = {"menu": "admin_menu"}
+
+    def _show_account_approval_menu(self, user: NetworkUser) -> None:
+        """Show account approval menu with pending users."""
+        pending = self._db.get_pending_users()
+
+        if not pending:
+            user.speak_l("no-pending-accounts")
+            self._show_admin_menu(user)
+            return
+
+        items = []
+        for pending_user in pending:
+            items.append(MenuItem(text=pending_user.username, id=f"pending_{pending_user.username}"))
+        items.append(MenuItem(text=Localization.get(user.locale, "back"), id="back"))
+
+        user.show_menu(
+            "account_approval_menu",
+            items,
+            multiletter=True,
+            escape_behavior=EscapeBehavior.SELECT_LAST,
+        )
+        self._user_states[user.username] = {"menu": "account_approval_menu"}
+
+    def _show_pending_user_actions_menu(self, user: NetworkUser, pending_username: str) -> None:
+        """Show actions for a pending user (approve, decline)."""
+        items = [
+            MenuItem(text=Localization.get(user.locale, "approve-account"), id="approve"),
+            MenuItem(text=Localization.get(user.locale, "decline-account"), id="decline"),
+            MenuItem(text=Localization.get(user.locale, "back"), id="back"),
+        ]
+        user.show_menu(
+            "pending_user_actions_menu",
+            items,
+            multiletter=True,
+            escape_behavior=EscapeBehavior.SELECT_LAST,
+        )
+        self._user_states[user.username] = {
+            "menu": "pending_user_actions_menu",
+            "pending_username": pending_username,
+        }
+
+    def _show_waiting_for_approval(self, user: NetworkUser) -> None:
+        """Show waiting for approval screen to unapproved user."""
+        user.speak_l("waiting-for-approval")
+        user.clear_ui()
+        self._user_states[user.username] = {"menu": "waiting_for_approval"}
+
     def _show_saved_tables_menu(self, user: NetworkUser) -> None:
         """Show saved tables menu."""
         saved = self._db.get_user_saved_tables(user.username)
@@ -707,6 +813,12 @@ class Server:
             await self._handle_my_game_stats_selection(user, selection_id, state)
         elif current_menu == "online_users":
             self._restore_previous_menu(user, state)
+        elif current_menu == "admin_menu":
+            await self._handle_admin_menu_selection(user, selection_id)
+        elif current_menu == "account_approval_menu":
+            await self._handle_account_approval_selection(user, selection_id)
+        elif current_menu == "pending_user_actions_menu":
+            await self._handle_pending_user_actions_selection(user, selection_id, state)
 
     async def _handle_main_menu_selection(
         self, user: NetworkUser, selection_id: str
@@ -724,6 +836,9 @@ class Server:
             self._show_my_stats_menu(user)
         elif selection_id == "options":
             self._show_options_menu(user)
+        elif selection_id == "administration":
+            if user.trust_level >= 2:
+                self._show_admin_menu(user)
         elif selection_id == "logout":
             user.speak_l("goodbye")
             await user.connection.send({"type": "disconnect", "reconnect": False})
@@ -2029,6 +2144,76 @@ class Server:
             self._show_my_stats_menu(user)
         # Other selections (stats entries) are informational only
 
+    async def _handle_admin_menu_selection(
+        self, user: NetworkUser, selection_id: str
+    ) -> None:
+        """Handle admin menu selection."""
+        if selection_id == "account_approval":
+            self._show_account_approval_menu(user)
+        elif selection_id == "back":
+            self._show_main_menu(user)
+
+    async def _handle_account_approval_selection(
+        self, user: NetworkUser, selection_id: str
+    ) -> None:
+        """Handle account approval menu selection."""
+        if selection_id == "back":
+            self._show_admin_menu(user)
+        elif selection_id.startswith("pending_"):
+            pending_username = selection_id[8:]  # Remove "pending_" prefix
+            self._show_pending_user_actions_menu(user, pending_username)
+
+    async def _handle_pending_user_actions_selection(
+        self, user: NetworkUser, selection_id: str, state: dict
+    ) -> None:
+        """Handle pending user actions menu selection."""
+        pending_username = state.get("pending_username")
+        if not pending_username:
+            self._show_account_approval_menu(user)
+            return
+
+        if selection_id == "approve":
+            await self._approve_user(user, pending_username)
+        elif selection_id == "decline":
+            await self._decline_user(user, pending_username)
+        elif selection_id == "back":
+            self._show_account_approval_menu(user)
+
+    async def _approve_user(self, admin: NetworkUser, username: str) -> None:
+        """Approve a pending user account."""
+        if self._db.approve_user(username):
+            admin.speak_l("account-approved", player=username)
+
+            # Check if the user is online and waiting for approval
+            waiting_user = self._users.get(username)
+            if waiting_user:
+                # Update the user's approved status so they can now interact
+                waiting_user.set_approved(True)
+
+                waiting_state = self._user_states.get(username, {})
+                if waiting_state.get("menu") == "waiting_for_approval":
+                    # User is online and waiting - welcome them and show main menu
+                    waiting_user.speak_l("account-approved-welcome")
+                    waiting_user.play_sound("welcome.ogg")
+                    self._show_main_menu(waiting_user)
+
+        self._show_account_approval_menu(admin)
+
+    async def _decline_user(self, admin: NetworkUser, username: str) -> None:
+        """Decline and delete a pending user account."""
+        # Check if the user is online first
+        waiting_user = self._users.get(username)
+
+        if self._db.delete_user(username):
+            admin.speak_l("account-declined", player=username)
+
+            # If user is online, disconnect them
+            if waiting_user:
+                waiting_user.speak_l("account-declined-goodbye")
+                await waiting_user.connection.send({"type": "disconnect", "reconnect": False})
+
+        self._show_account_approval_menu(admin)
+
     def on_table_destroy(self, table) -> None:
         """Handle table destruction. Called by TableManager."""
         if not table.game:
@@ -2144,33 +2329,26 @@ class Server:
         message = packet.get("message", "")
         language = packet.get("language", "Other")
 
+        chat_packet = {
+            "type": "chat",
+            "convo": convo,
+            "sender": username,
+            "message": message,
+            "language": language,
+        }
+
         if convo == "local":
             table = self._tables.find_user_table(username)
             if table:
                 for member_name in [m.username for m in table.members]:
                     user = self._users.get(member_name)
-                    if user:
-                        await user.connection.send(
-                            {
-                                "type": "chat",
-                                "convo": "local",
-                                "sender": username,
-                                "message": message,
-                                "language": language,
-                            }
-                        )
+                    if user and user.approved:  # Only send to approved users
+                        await user.connection.send(chat_packet)
         elif convo == "global":
-            # Broadcast to all users
-            if self._ws_server:
-                await self._ws_server.broadcast(
-                    {
-                        "type": "chat",
-                        "convo": "global",
-                        "sender": username,
-                        "message": message,
-                        "language": language,
-                    }
-                )
+            # Broadcast to all approved users only
+            for user in self._users.values():
+                if user.approved:
+                    await user.connection.send(chat_packet)
 
     def _get_online_usernames(self) -> list[str]:
         """Return sorted list of online usernames."""
@@ -2180,6 +2358,13 @@ class Server:
         """Format online users with game names for menu display."""
         lines: list[str] = []
         for username in self._get_online_usernames():
+            online_user = self._users.get(username)
+            # Check if user is waiting for approval
+            if online_user and not online_user.approved:
+                status = Localization.get(user.locale, "online-user-waiting-approval")
+                lines.append(f"{username}: {status}")
+                continue
+
             table = self._tables.find_user_table(username)
             if table:
                 game_class = get_game_class(table.game_type)
@@ -2190,9 +2375,10 @@ class Server:
                 )
                 lines.append(f"{username}: {game_name}")
             else:
-                lines.append(f"{username}: Not in game")
+                status = Localization.get(user.locale, "online-user-not-in-game")
+                lines.append(f"{username}: {status}")
         if not lines:
-            lines.append("No users online.")
+            lines.append(Localization.get(user.locale, "online-users-none"))
         return lines
 
     def _show_online_users_menu(self, user: NetworkUser) -> None:

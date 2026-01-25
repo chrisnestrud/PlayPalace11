@@ -727,6 +727,13 @@ class FarkleGame(Game):
         else:
             return  # Unknown combo
 
+        # Validate that the combo is actually available in the current roll
+        if not has_combination(farkle_player.current_roll, combo_type, number):
+            # Combo no longer available (stale menu state), refresh the menu
+            self.update_scoring_actions(farkle_player)
+            self.rebuild_player_menu(farkle_player)
+            return
+
         points = get_combination_points(combo_type, number)
         combo_name = self._get_combo_name(combo_type, number)
 
@@ -933,6 +940,9 @@ class FarkleGame(Game):
         farkle_player.current_roll = []
         farkle_player.banked_dice = []
         farkle_player.has_taken_combo = False
+
+        # Clear stale scoring actions from previous turn (current_roll is empty now)
+        self.update_scoring_actions(farkle_player)
 
         # Announce turn
         self.announce_turn()

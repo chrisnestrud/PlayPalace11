@@ -61,6 +61,11 @@ class User(ABC):
         ...
 
     @property
+    def trust_level(self) -> int:
+        """The user's trust level (1 = player, 2 = admin). Defaults to 1 if not overridden."""
+        return 1
+
+    @property
     def preferences(self) -> "UserPreferences":
         """The user's preferences. Returns defaults if not overridden."""
         from .preferences import UserPreferences

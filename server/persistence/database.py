@@ -18,6 +18,8 @@ class UserRecord:
     uuid: str  # Persistent unique identifier for stats tracking
     locale: str = "en"
     preferences_json: str = "{}"
+    trust_level: int = 1  # 1 = player, 2 = admin
+    approved: bool = False  # Whether the account has been approved by an admin
 
 
 @dataclass
@@ -68,7 +70,9 @@ class Database:
                 password_hash TEXT NOT NULL,
                 uuid TEXT NOT NULL,
                 locale TEXT DEFAULT 'en',
-                preferences_json TEXT DEFAULT '{}'
+                preferences_json TEXT DEFAULT '{}',
+                trust_level INTEGER DEFAULT 1,
+                approved INTEGER DEFAULT 0
             )
         """)
 
@@ -145,13 +149,34 @@ class Database:
 
         self._conn.commit()
 
+        # Run migrations for existing databases
+        self._run_migrations()
+
+    def _run_migrations(self) -> None:
+        """Run database migrations for existing databases."""
+        cursor = self._conn.cursor()
+
+        # Check which columns exist in users table
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "trust_level" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN trust_level INTEGER DEFAULT 1")
+            self._conn.commit()
+
+        if "approved" not in columns:
+            # Add approved column - existing users are auto-approved
+            cursor.execute("ALTER TABLE users ADD COLUMN approved INTEGER DEFAULT 0")
+            cursor.execute("UPDATE users SET approved = 1")  # Approve all existing users
+            self._conn.commit()
+
     # User operations
 
     def get_user(self, username: str) -> UserRecord | None:
         """Get a user by username."""
         cursor = self._conn.cursor()
         cursor.execute(
-            "SELECT id, username, password_hash, uuid, locale, preferences_json FROM users WHERE username = ?",
+            "SELECT id, username, password_hash, uuid, locale, preferences_json, trust_level, approved FROM users WHERE username = ?",
             (username,),
         )
         row = cursor.fetchone()
@@ -163,19 +188,21 @@ class Database:
                 uuid=row["uuid"],
                 locale=row["locale"] or "en",
                 preferences_json=row["preferences_json"] or "{}",
+                trust_level=row["trust_level"] if row["trust_level"] is not None else 1,
+                approved=bool(row["approved"]) if row["approved"] is not None else False,
             )
         return None
 
     def create_user(
-        self, username: str, password_hash: str, locale: str = "en"
+        self, username: str, password_hash: str, locale: str = "en", trust_level: int = 1, approved: bool = False
     ) -> UserRecord:
         """Create a new user with a generated UUID."""
         import uuid as uuid_module
         user_uuid = str(uuid_module.uuid4())
         cursor = self._conn.cursor()
         cursor.execute(
-            "INSERT INTO users (username, password_hash, uuid, locale) VALUES (?, ?, ?, ?)",
-            (username, password_hash, user_uuid, locale),
+            "INSERT INTO users (username, password_hash, uuid, locale, trust_level, approved) VALUES (?, ?, ?, ?, ?, ?)",
+            (username, password_hash, user_uuid, locale, trust_level, 1 if approved else 0),
         )
         self._conn.commit()
         return UserRecord(
@@ -184,6 +211,8 @@ class Database:
             password_hash=password_hash,
             uuid=user_uuid,
             locale=locale,
+            trust_level=trust_level,
+            approved=approved,
         )
 
     def user_exists(self, username: str) -> bool:
@@ -217,6 +246,96 @@ class Database:
             (password_hash, username),
         )
         self._conn.commit()
+
+    def get_user_count(self) -> int:
+        """Get the total number of users in the database."""
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users")
+        return cursor.fetchone()[0]
+
+    def initialize_trust_levels(self) -> str | None:
+        """
+        Initialize trust levels for users who don't have one set.
+
+        Sets all users without a trust level to 1 (player).
+        If there's exactly one user and they have no trust level, sets them to 2 (admin).
+
+        Returns:
+            The username of the user promoted to admin, or None if no promotion occurred.
+        """
+        cursor = self._conn.cursor()
+
+        # Check if there's exactly one user with no trust level set
+        cursor.execute("SELECT id, username FROM users WHERE trust_level IS NULL")
+        users_without_trust = cursor.fetchall()
+
+        promoted_user = None
+
+        if len(users_without_trust) == 1:
+            # Check if this is the only user in the database
+            cursor.execute("SELECT COUNT(*) FROM users")
+            total_users = cursor.fetchone()[0]
+
+            if total_users == 1:
+                # First and only user - make them admin
+                username = users_without_trust[0]["username"]
+                cursor.execute(
+                    "UPDATE users SET trust_level = 2 WHERE id = ?",
+                    (users_without_trust[0]["id"],),
+                )
+                promoted_user = username
+
+        # Set all remaining users without trust level to 1 (player)
+        cursor.execute("UPDATE users SET trust_level = 1 WHERE trust_level IS NULL")
+        self._conn.commit()
+
+        return promoted_user
+
+    def update_user_trust_level(self, username: str, trust_level: int) -> None:
+        """Update a user's trust level."""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "UPDATE users SET trust_level = ? WHERE username = ?",
+            (trust_level, username),
+        )
+        self._conn.commit()
+
+    def get_pending_users(self) -> list[UserRecord]:
+        """Get all users who are not yet approved."""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT id, username, password_hash, uuid, locale, preferences_json, trust_level, approved FROM users WHERE approved = 0"
+        )
+        users = []
+        for row in cursor.fetchall():
+            users.append(UserRecord(
+                id=row["id"],
+                username=row["username"],
+                password_hash=row["password_hash"],
+                uuid=row["uuid"],
+                locale=row["locale"] or "en",
+                preferences_json=row["preferences_json"] or "{}",
+                trust_level=row["trust_level"] if row["trust_level"] is not None else 1,
+                approved=False,
+            ))
+        return users
+
+    def approve_user(self, username: str) -> bool:
+        """Approve a user account. Returns True if user was found and approved."""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "UPDATE users SET approved = 1 WHERE username = ?",
+            (username,),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_user(self, username: str) -> bool:
+        """Delete a user account. Returns True if user was found and deleted."""
+        cursor = self._conn.cursor()
+        cursor.execute("DELETE FROM users WHERE username = ?", (username,))
+        self._conn.commit()
+        return cursor.rowcount > 0
 
     # Table operations
 
