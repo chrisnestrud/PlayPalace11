@@ -706,13 +706,18 @@ class CrazyEightsGame(Game):
         user = self.get_user(player)
         if not user:
             return
+        locale = user.locale
         parts = []
         for p in self.turn_players:
             if p.is_spectator:
                 continue
             if isinstance(p, CrazyEightsPlayer):
                 parts.append(f"{p.name} {len(p.hand)}")
-        user.speak(", ".join(parts) if parts else Localization.get(user.locale, "crazyeights-no-players"))
+        deck_count = self.deck.size()
+        if deck_count > 0:
+            parts.append(Localization.get(locale, "crazyeights-deck-count", count=deck_count))
+        text = ", ".join(parts) if parts else Localization.get(locale, "crazyeights-no-players")
+        user.speak(text)
 
     def _action_check_turn_timer(self, player: Player, action_id: str) -> None:
         user = self.get_user(player)
@@ -787,8 +792,6 @@ class CrazyEightsGame(Game):
             return "action-not-available"
         if self.turn_has_drawn:
             return "action-not-available"
-        if len(player.hand) >= self.max_hand_size:
-            return "action-not-available"
         if self._has_playable_cards(player):
             return "action-not-available"
         return None
@@ -801,8 +804,6 @@ class CrazyEightsGame(Game):
         if not isinstance(player, CrazyEightsPlayer):
             return Visibility.HIDDEN
         if self.turn_has_drawn:
-            return Visibility.HIDDEN
-        if len(player.hand) >= self.max_hand_size:
             return Visibility.HIDDEN
         if self._has_playable_cards(player):
             return Visibility.HIDDEN

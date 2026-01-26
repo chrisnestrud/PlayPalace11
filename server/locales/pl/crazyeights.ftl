@@ -14,6 +14,7 @@ crazyeights-draw = Draw
 crazyeights-pass = Pass
 crazyeights-read-top = Read top card
 crazyeights-read-counts = Read card counts
+crazyeights-deck-count = talię { $count }
 
 crazyeights-new-hand = Round { $round }.
 crazyeights-start-card = { $player } turns up { $card }.

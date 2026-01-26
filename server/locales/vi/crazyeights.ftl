@@ -14,6 +14,7 @@ crazyeights-draw = Rút bài
 crazyeights-pass = Bỏ lượt
 crazyeights-read-top = Xem bài trên cùng
 crazyeights-read-counts = Xem số lượng bài còn lại
+crazyeights-deck-count = Xấp bài còn lại { $count }
 
 crazyeights-new-hand = Vòng { $round }.
 crazyeights-start-card = { $player } lật lên lá { $card }.
