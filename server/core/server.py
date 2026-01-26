@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 
 from .tick import TickScheduler
+from .administration import AdministrationMixin
 from ..network.websocket_server import WebSocketServer, ClientConnection
 from ..persistence.database import Database
 from ..auth.auth import AuthManager
@@ -26,7 +27,7 @@ _MODULE_DIR = Path(__file__).parent.parent
 _DEFAULT_LOCALES_DIR = _MODULE_DIR / "locales"
 
 
-class Server:
+class Server(AdministrationMixin):
     """
     Main PlayPalace v11 server.
 
@@ -216,18 +217,6 @@ class Server:
             if not user.approved:
                 continue  # Don't send broadcasts to unapproved users
             user.speak_l("user-is-admin", player=admin_name)
-
-    def _notify_admins(
-        self, message_id: str, sound: str, exclude_username: str | None = None
-    ) -> None:
-        """Notify all online admins with a message and sound, optionally excluding one admin."""
-        for username, user in self._users.items():
-            if user.trust_level < 2:
-                continue  # Not an admin
-            if exclude_username and username == exclude_username:
-                continue  # Skip the excluded admin
-            user.speak_l(message_id)
-            user.play_sound(sound)
 
     async def _on_client_message(self, client: ClientConnection, packet: dict) -> None:
         """Handle incoming message from client."""
@@ -676,63 +665,6 @@ class Server:
         )
         self._user_states[user.username] = {"menu": "language_menu"}
 
-    def _show_admin_menu(self, user: NetworkUser) -> None:
-        """Show administration menu."""
-        items = [
-            MenuItem(
-                text=Localization.get(user.locale, "account-approval"),
-                id="account_approval",
-            ),
-            MenuItem(text=Localization.get(user.locale, "back"), id="back"),
-        ]
-        user.show_menu(
-            "admin_menu",
-            items,
-            multiletter=True,
-            escape_behavior=EscapeBehavior.SELECT_LAST,
-        )
-        self._user_states[user.username] = {"menu": "admin_menu"}
-
-    def _show_account_approval_menu(self, user: NetworkUser) -> None:
-        """Show account approval menu with pending users."""
-        pending = self._db.get_pending_users()
-
-        if not pending:
-            user.speak_l("no-pending-accounts")
-            self._show_admin_menu(user)
-            return
-
-        items = []
-        for pending_user in pending:
-            items.append(MenuItem(text=pending_user.username, id=f"pending_{pending_user.username}"))
-        items.append(MenuItem(text=Localization.get(user.locale, "back"), id="back"))
-
-        user.show_menu(
-            "account_approval_menu",
-            items,
-            multiletter=True,
-            escape_behavior=EscapeBehavior.SELECT_LAST,
-        )
-        self._user_states[user.username] = {"menu": "account_approval_menu"}
-
-    def _show_pending_user_actions_menu(self, user: NetworkUser, pending_username: str) -> None:
-        """Show actions for a pending user (approve, decline)."""
-        items = [
-            MenuItem(text=Localization.get(user.locale, "approve-account"), id="approve"),
-            MenuItem(text=Localization.get(user.locale, "decline-account"), id="decline"),
-            MenuItem(text=Localization.get(user.locale, "back"), id="back"),
-        ]
-        user.show_menu(
-            "pending_user_actions_menu",
-            items,
-            multiletter=True,
-            escape_behavior=EscapeBehavior.SELECT_LAST,
-        )
-        self._user_states[user.username] = {
-            "menu": "pending_user_actions_menu",
-            "pending_username": pending_username,
-        }
-
     def _show_waiting_for_approval(self, user: NetworkUser) -> None:
         """Show waiting for approval screen to unapproved user."""
         user.speak_l("waiting-for-approval")
@@ -850,6 +782,16 @@ class Server:
             await self._handle_account_approval_selection(user, selection_id)
         elif current_menu == "pending_user_actions_menu":
             await self._handle_pending_user_actions_selection(user, selection_id, state)
+        elif current_menu == "promote_admin_menu":
+            await self._handle_promote_admin_selection(user, selection_id)
+        elif current_menu == "demote_admin_menu":
+            await self._handle_demote_admin_selection(user, selection_id)
+        elif current_menu == "promote_confirm_menu":
+            await self._handle_promote_confirm_selection(user, selection_id, state)
+        elif current_menu == "demote_confirm_menu":
+            await self._handle_demote_confirm_selection(user, selection_id, state)
+        elif current_menu == "broadcast_choice_menu":
+            await self._handle_broadcast_choice_selection(user, selection_id, state)
 
     async def _handle_main_menu_selection(
         self, user: NetworkUser, selection_id: str
@@ -2174,86 +2116,6 @@ class Server:
         if selection_id == "back":
             self._show_my_stats_menu(user)
         # Other selections (stats entries) are informational only
-
-    async def _handle_admin_menu_selection(
-        self, user: NetworkUser, selection_id: str
-    ) -> None:
-        """Handle admin menu selection."""
-        if selection_id == "account_approval":
-            self._show_account_approval_menu(user)
-        elif selection_id == "back":
-            self._show_main_menu(user)
-
-    async def _handle_account_approval_selection(
-        self, user: NetworkUser, selection_id: str
-    ) -> None:
-        """Handle account approval menu selection."""
-        if selection_id == "back":
-            self._show_admin_menu(user)
-        elif selection_id.startswith("pending_"):
-            pending_username = selection_id[8:]  # Remove "pending_" prefix
-            self._show_pending_user_actions_menu(user, pending_username)
-
-    async def _handle_pending_user_actions_selection(
-        self, user: NetworkUser, selection_id: str, state: dict
-    ) -> None:
-        """Handle pending user actions menu selection."""
-        pending_username = state.get("pending_username")
-        if not pending_username:
-            self._show_account_approval_menu(user)
-            return
-
-        if selection_id == "approve":
-            await self._approve_user(user, pending_username)
-        elif selection_id == "decline":
-            await self._decline_user(user, pending_username)
-        elif selection_id == "back":
-            self._show_account_approval_menu(user)
-
-    async def _approve_user(self, admin: NetworkUser, username: str) -> None:
-        """Approve a pending user account."""
-        if self._db.approve_user(username):
-            admin.speak_l("account-approved", player=username)
-
-            # Notify other admins of the account action
-            self._notify_admins(
-                "account-action", "accountactionnotify.ogg", exclude_username=admin.username
-            )
-
-            # Check if the user is online and waiting for approval
-            waiting_user = self._users.get(username)
-            if waiting_user:
-                # Update the user's approved status so they can now interact
-                waiting_user.set_approved(True)
-
-                waiting_state = self._user_states.get(username, {})
-                if waiting_state.get("menu") == "waiting_for_approval":
-                    # User is online and waiting - welcome them and show main menu
-                    waiting_user.speak_l("account-approved-welcome")
-                    waiting_user.play_sound("accountapprove.ogg")
-                    self._show_main_menu(waiting_user)
-
-        self._show_account_approval_menu(admin)
-
-    async def _decline_user(self, admin: NetworkUser, username: str) -> None:
-        """Decline and delete a pending user account."""
-        # Check if the user is online first
-        waiting_user = self._users.get(username)
-
-        if self._db.delete_user(username):
-            admin.speak_l("account-declined", player=username)
-
-            # Notify other admins of the account action
-            self._notify_admins(
-                "account-action", "accountactionnotify.ogg", exclude_username=admin.username
-            )
-
-            # If user is online, disconnect them
-            if waiting_user:
-                waiting_user.speak_l("account-declined-goodbye")
-                await waiting_user.connection.send({"type": "disconnect", "reconnect": False})
-
-        self._show_account_approval_menu(admin)
 
     def on_table_destroy(self, table) -> None:
         """Handle table destruction. Called by TableManager."""

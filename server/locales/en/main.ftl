@@ -255,3 +255,21 @@ account-declined-goodbye = Your account request has been declined.
 # Admin notifications for account requests
 account-request = account request
 account-action = account action taken
+
+# Admin promotion/demotion
+promote-admin = Promote Admin
+demote-admin = Demote Admin
+promote-admin-menu-title = Promote Admin
+demote-admin-menu-title = Demote Admin
+no-users-to-promote = No users available to promote.
+no-admins-to-demote = No admins available to demote.
+confirm-promote = Are you sure you want to promote { $player } to admin?
+confirm-demote = Are you sure you want to demote { $player } from admin?
+broadcast-to-all = Announce to all users
+broadcast-to-admins = Announce to admins only
+broadcast-to-nobody = Silent (no announcement)
+promote-announcement = { $player } has been promoted to admin!
+promote-announcement-you = You have been promoted to admin!
+demote-announcement = { $player } has been demoted from admin.
+demote-announcement-you = You have been demoted from admin.
+not-admin-anymore = You are no longer an admin and cannot perform this action.
