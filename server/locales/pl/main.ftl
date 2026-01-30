@@ -253,6 +253,11 @@ account-declined-goodbye = Twoja prośba o konto została odrzucona.
     Powód:
 account-banned = Twoje konto zostało zbanowane i nie można uzyskać do niego dostępu.
 
+# Błędy logowania
+incorrect-username = Wprowadzona nazwa użytkownika nie istnieje.
+incorrect-password = Wprowadzone hasło jest nieprawidłowe.
+already-logged-in = To konto jest już zalogowane.
+
 # Powód odrzucenia
 decline-reason-prompt = Podaj powód odrzucenia (lub naciśnij Escape, aby anulować):
 account-action-empty-reason = Nie podano powodu.

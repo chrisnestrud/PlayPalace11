@@ -256,6 +256,11 @@ account-declined-goodbye = Yêu cầu tạo tài khoản của bạn đã bị t
     Lý do:
 account-banned = Tài khoản của bạn đã bị cấm và không thể truy cập.
 
+# Lỗi đăng nhập
+incorrect-username = Tên người dùng bạn nhập không tồn tại.
+incorrect-password = Mật khẩu bạn nhập không chính xác.
+already-logged-in = Tài khoản này đã đăng nhập.
+
 # Lý do từ chối
 decline-reason-prompt = Nhập lý do từ chối (hoặc nhấn Escape để hủy):
 account-action-empty-reason = Không có lý do được cung cấp.

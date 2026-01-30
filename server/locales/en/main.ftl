@@ -256,6 +256,11 @@ account-declined-goodbye = Your account request has been declined.
     Reason:
 account-banned = Your account is banned and cannot be accessed.
 
+# Login errors
+incorrect-username = The username you entered does not exist.
+incorrect-password = The password you entered is incorrect.
+already-logged-in = This account is already logged in.
+
 # Decline reason
 decline-reason-prompt = Enter a reason for declining (or press Escape to cancel):
 account-action-empty-reason = No reason given.

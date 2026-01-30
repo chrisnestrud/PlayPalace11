@@ -840,6 +840,7 @@ class AdministrationMixin:
                     "type": "disconnect",
                     "reconnect": False,
                     "show_message": True,
+                    "return_to_login": True,
                 })
 
         self._show_account_approval_menu(admin)

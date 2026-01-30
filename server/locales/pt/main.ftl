@@ -213,6 +213,11 @@ account-declined-goodbye = Sua solicitação de conta foi recusada.
     Motivo:
 account-banned = Sua conta está banida e não pode ser acessada.
 
+# Erros de login
+incorrect-username = O nome de usuário que você digitou não existe.
+incorrect-password = A senha que você digitou está incorreta.
+already-logged-in = Esta conta já está conectada.
+
 # Motivo da recusa
 decline-reason-prompt = Digite um motivo para a recusa (ou pressione Escape para cancelar):
 account-action-empty-reason = Nenhum motivo fornecido.

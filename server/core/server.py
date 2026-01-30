@@ -12,7 +12,7 @@ from .administration import AdministrationMixin
 from .virtual_bots import VirtualBotManager
 from ..network.websocket_server import WebSocketServer, ClientConnection
 from ..persistence.database import Database
-from ..auth.auth import AuthManager
+from ..auth.auth import AuthManager, AuthResult
 from ..tables.manager import TableManager
 from ..users.network_user import NetworkUser
 from ..users.base import MenuItem, EscapeBehavior, TrustLevel
@@ -288,27 +288,57 @@ class Server(AdministrationMixin):
         """Handle authorization packet."""
         username = packet.get("username", "")
         password = packet.get("password", "")
+        locale = packet.get("locale", "en")
 
         # Try to authenticate or register
-        if not self._auth.authenticate(username, password):
-            # Check if this will be a new user that needs approval (not the first user)
+        auth_result = self._auth.authenticate(username, password)
+        if auth_result != AuthResult.SUCCESS:
+            if auth_result == AuthResult.WRONG_PASSWORD:
+                # Username exists but password is wrong - show error dialog
+                error_message = Localization.get(locale, "incorrect-password")
+                await client.send({"type": "play_sound", "name": "accounterror.ogg"})
+                await client.send({"type": "speak", "text": error_message})
+                await client.send({
+                    "type": "disconnect",
+                    "reconnect": False,
+                    "show_message": True,
+                    "return_to_login": True,
+                })
+                return
+
+            # User not found - check if this will be a new user that needs approval
             needs_approval = self._db.get_user_count() > 0
 
             # Try to register
             if not self._auth.register(username, password):
-                # Username taken with different password
-                await client.send(
-                    {
-                        "type": "disconnect",
-                        "reason": "Invalid credentials",
-                        "reconnect": False,
-                    }
-                )
+                # Registration failed (shouldn't happen if user not found, but handle anyway)
+                error_message = Localization.get(locale, "incorrect-username")
+                await client.send({"type": "play_sound", "name": "accounterror.ogg"})
+                await client.send({"type": "speak", "text": error_message})
+                await client.send({
+                    "type": "disconnect",
+                    "reconnect": False,
+                    "show_message": True,
+                    "return_to_login": True,
+                })
                 return
 
             # New user registered - notify admins if approval is needed
             if needs_approval:
                 self._notify_admins("account-request", "accountrequest.ogg")
+
+        # Check if user is already logged in
+        if username in self._users:
+            error_message = Localization.get(locale, "already-logged-in")
+            await client.send({"type": "play_sound", "name": "accounterror.ogg"})
+            await client.send({"type": "speak", "text": error_message})
+            await client.send({
+                "type": "disconnect",
+                "reconnect": False,
+                "show_message": True,
+                "return_to_login": True,
+            })
+            return
 
         # Authentication successful
         client.username = username
