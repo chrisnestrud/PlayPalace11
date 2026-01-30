@@ -1322,6 +1322,7 @@ class CrazyEightsGame(Game):
                     player_id=p.id,
                     player_name=p.name,
                     is_bot=p.is_bot,
+                    is_virtual_bot=getattr(p, "is_virtual_bot", False),
                 )
                 for p in active
             ],
