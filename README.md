@@ -99,11 +99,10 @@ To limit the maximum inbound websocket payload size (guarding against giant pack
 ```toml
 [network]
 max_message_bytes = 1_048_576  # 1 MB default
-allow_insecure_ws = false      # force TLS by default
 ```
 
 Values are in bytes and map directly to the `max_size` setting used by the underlying websockets server.
-Set `allow_insecure_ws` to `true` only for trusted development setups where TLS certificates are unavailable; the server will refuse to start without TLS when this flag is `false`, and it will print a loud warning whenever it runs in plaintext mode.
+When no TLS certificate is supplied the server still runs over `ws://`, but it prints a loud warning because credentials would travel in plaintext. Provide `--ssl-cert/--ssl-key` for production deployments so the startup warning disappears.
 `[auth.rate_limits]` caps how many login attempts each IP can make per minute, how many failed attempts a specific username can accrue, and how many registrations are allowed per minute from the same IP. Setting any of the limits to `0` disables that particular throttle.
 
 ## Project Structure

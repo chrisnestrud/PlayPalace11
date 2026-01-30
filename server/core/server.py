@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import sys
 import time
 from collections import deque
@@ -42,19 +43,6 @@ DEFAULT_REGISTRATION_ATTEMPTS_PER_MINUTE = 2
 LOGIN_RATE_WINDOW_SECONDS = 60
 REGISTRATION_RATE_WINDOW_SECONDS = 60
 
-
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return default
 
 # Default paths based on module location
 _MODULE_DIR = Path(__file__).parent.parent
@@ -105,7 +93,6 @@ class Server(AdministrationMixin):
         self._password_max_length = DEFAULT_PASSWORD_MAX_LENGTH
         self._ws_max_message_size = DEFAULT_WS_MAX_MESSAGE_BYTES
         self._config_path = Path(config_path) if config_path else _MODULE_DIR / "config.toml"
-        self._allow_insecure_ws = False
         self._login_ip_limit = DEFAULT_LOGIN_ATTEMPTS_PER_MINUTE
         self._login_user_limit = DEFAULT_LOGIN_FAILURES_PER_MINUTE
         self._registration_ip_limit = DEFAULT_REGISTRATION_ATTEMPTS_PER_MINUTE
@@ -126,9 +113,6 @@ class Server(AdministrationMixin):
     async def start(self) -> None:
         """Start the server."""
         print(f"Starting PlayPalace v{VERSION} server...")
-
-        # Enforce transport requirements before bringing up listeners
-        self._validate_transport_security()
 
         # Connect to database
         self._db.connect()
@@ -249,9 +233,6 @@ class Server(AdministrationMixin):
         if isinstance(net_cfg, dict):
             max_bytes = _read_limit(net_cfg, "max_message_bytes", self._ws_max_message_size, minimum=1)
             self._ws_max_message_size = max_bytes
-            self._allow_insecure_ws = _coerce_bool(
-                net_cfg.get("allow_insecure_ws"), self._allow_insecure_ws
-            )
 
         rate_cfg = auth_cfg.get("rate_limits") if isinstance(auth_cfg, dict) else None
         if isinstance(rate_cfg, dict):
@@ -272,11 +253,22 @@ class Server(AdministrationMixin):
                 rate_cfg, "registration_window_seconds", self._registration_ip_window, minimum=1
             )
 
-    def _validate_transport_security(self) -> None:
-        if not self._ssl_cert and not self._allow_insecure_ws:
-            raise RuntimeError(
-                "TLS is required. Provide --ssl-cert/--ssl-key or set [network].allow_insecure_ws to true."
-            )
+    def _warn_if_no_users(self) -> None:
+        """Print a warning if no user accounts exist yet."""
+        if os.environ.get(BOOTSTRAP_WARNING_ENV):
+            return
+        try:
+            if self._db.get_user_count() > 0:
+                return
+        except Exception:  # pragma: no cover - defensive
+            return
+
+        print(
+            "WARNING: No user accounts exist. Run "
+            "`uv run python -m server.cli bootstrap-owner --username <name>` "
+            "to create an initial administrator before exposing this server on the network. "
+            f"Set {BOOTSTRAP_WARNING_ENV}=1 to suppress this warning for CI or local testing."
+        )
 
     @staticmethod
     def _get_client_ip(client: ClientConnection) -> str:

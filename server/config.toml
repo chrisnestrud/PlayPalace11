@@ -12,7 +12,6 @@ registration_per_minute = 2
 
 [network]
 max_message_bytes = 1048576
-allow_insecure_ws = false
 
 [virtual_bots]
 # Bot names - these will be used for virtual bot usernames

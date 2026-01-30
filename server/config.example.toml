@@ -15,8 +15,6 @@ registration_per_minute = 2
 [network]
 # Maximum bytes accepted per websocket message (maps to websockets' max_size)
 max_message_bytes = 1048576
-# Allow ws:// without TLS (only for trusted local development)
-allow_insecure_ws = false
 
 [server]
 # Tick interval in milliseconds (default: 50ms = 20 ticks/sec)

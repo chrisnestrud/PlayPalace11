@@ -307,19 +307,3 @@ max_message_bytes = 2048
 def test_network_max_size_defaults(tmp_path):
     srv = Server(db_path=str(tmp_path / "auth.db"), locales_dir="locales", config_path=tmp_path / "missing.toml")
     assert srv._ws_max_message_size == DEFAULT_WS_MAX_MESSAGE_BYTES
-    with pytest.raises(RuntimeError):
-        srv._validate_transport_security()
-
-
-def test_allow_insecure_ws_flag_enables_plaintext(tmp_path):
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        """
-[network]
-allow_insecure_ws = true
-"""
-    )
-    srv = Server(db_path=str(tmp_path / "auth.db"), locales_dir="locales", config_path=config_path)
-    srv._ssl_cert = None
-    # Should not raise
-    srv._validate_transport_security()
