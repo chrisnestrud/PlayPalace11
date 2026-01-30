@@ -162,12 +162,14 @@ class MainWindow(wx.Frame):
         self.chat_input = wx.TextCtrl(panel, size=(0, 0), style=wx.TE_PROCESS_ENTER)
         self.chat_input.Bind(wx.EVT_TEXT_ENTER, self.on_chat_enter)
 
-        # History text - not visible, just exists for data storage
+        # History text - accessible but not visible (small size for screen readers)
         # No word wrap for better screen reader accessibility
         wx.StaticText(panel, label="&History")
         self.history_text = wx.TextCtrl(
-            panel, size=(0, 0), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP
+            panel, size=(1, 1), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP
         )
+        # Make sure it's accessible to screen readers despite small size
+        self.history_text.SetName("History")
 
         # No sizers, no layout - audio-only interface
 
@@ -286,7 +288,11 @@ class MainWindow(wx.Frame):
 
     def on_menu_unfocus(self, event):
         """Handle menu list losing focus - disable buffer navigation."""
-        self.SetAcceleratorTable(self.accel_table_without_buffers)
+        try:
+            self.SetAcceleratorTable(self.accel_table_without_buffers)
+        except RuntimeError:
+            # Window is being destroyed, ignore
+            pass
         event.Skip()
 
     def modify_option_value(self, key_path: str, value, *, create_mode: bool = True) -> bool:
@@ -460,6 +466,36 @@ class MainWindow(wx.Frame):
             # Just speak the message text, no position info
             self.speaker.speak(item["text"], interrupt=True)
         # If no item, fail silently (don't announce empty buffer)
+
+    def _announce_menu_selection(self):
+        """Announce the currently selected menu item to screen reader."""
+        selection = self.menu_list.GetSelection()
+        if selection != wx.NOT_FOUND:
+            text = self.menu_list.GetString(selection)
+            # Force focus event to trigger screen reader announcement
+            # First ensure the list has focus
+            if wx.Window.FindFocus() != self.menu_list:
+                self.menu_list.SetFocus()
+            # Then trigger an accessibility event by selecting the item again
+            # This forces Orca to re-announce the selection
+            self.menu_list.SetSelection(selection)
+            # Also use accessible_output2 as backup
+            try:
+                self.speaker.speak(text, interrupt=True)
+            except:
+                pass
+
+    def _force_orca_announcement(self):
+        """Force announcement of the current menu selection."""
+        selection = self.menu_list.GetSelection()
+        if selection == wx.NOT_FOUND or self.menu_list.GetCount() == 0:
+            return
+        
+        # Get the text of the selected item
+        text = self.menu_list.GetString(selection)
+        
+        # Speak it directly - accessible_output2.Auto() detects Orca automatically
+        self.speaker.speak(text, interrupt=True)
 
     def on_char_hook(self, event):
         """Handle character input for game keypresses."""
@@ -1816,7 +1852,7 @@ class MainWindow(wx.Frame):
             for item in items:
                 self.menu_list.Append(item)
 
-            # Set focus first to avoid double announcement
+            # Set focus first to make sure list is active
             focused = wx.Window.FindFocus()
             if focused != self.chat_input and focused != self.history_text:
                 self.menu_list.SetFocus()
@@ -1827,6 +1863,10 @@ class MainWindow(wx.Frame):
                     self.menu_list.SetSelection(position)
                 else:
                     self.menu_list.SetSelection(0)
+                
+                # Force Orca to announce by triggering an LISTBOX event
+                # Do this after a small delay to ensure focus is properly set
+                wx.CallLater(100, self._force_orca_announcement)
 
         # Update client data (sounds)
         # Moved to end of function to ensure menu items exist
@@ -1871,7 +1911,7 @@ class MainWindow(wx.Frame):
             for item in items:
                 self.menu_list.Append(item)
 
-            # Set focus first to avoid double announcement
+            # Set focus first to make sure list is active
             focused = wx.Window.FindFocus()
             if focused != self.chat_input and focused != self.history_text:
                 self.menu_list.SetFocus()
@@ -1882,6 +1922,10 @@ class MainWindow(wx.Frame):
                     self.menu_list.SetSelection(position)
                 else:
                     self.menu_list.SetSelection(0)
+                
+                # Force Orca to announce by triggering an LISTBOX event
+                # Do this after a small delay to ensure focus is properly set
+                wx.CallLater(100, self._force_orca_announcement)
 
         # Update client data (sounds) - ensure we update ALL items after any changes
         for i, sound in enumerate(item_sounds):

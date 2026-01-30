@@ -534,6 +534,12 @@ class SoundManager:
         # Start ambience playback in background thread
         def play_ambience_sequence():
             try:
+                # Check if audio is available (BASS initialized)
+                from sound_cacher import o
+                if o is None:
+                    # Silent mode - skip ambience
+                    return
+                
                 intro_path = (
                     os.path.join(self.sounds_folder, intro_name) if intro_name else None
                 )
