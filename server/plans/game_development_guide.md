@@ -84,6 +84,8 @@ Look at the existing games for the structure you need. The key constraints are:
 - Use the action system for player choices
 - Follow the patterns you saw in step 1
 
+**Buffer rule of thumb:** if a message advances game state or narrates table action, route it to the **table** buffer. Use `broadcast()` / `broadcast_l()` and `broadcast_personal_l()` for “you” vs “player” messages. Reserve `user.speak()` / `user.speak_l()` for direct command responses (e.g., “read top card”, “no saved tables”).
+
 ## Step 4: Test with the CLI
 
 Test your game using the CLI tool. This catches most bugs quickly.
