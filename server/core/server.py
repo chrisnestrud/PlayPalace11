@@ -3,9 +3,11 @@
 import asyncio
 import logging
 import os
+import shutil
 import sys
 import time
 from collections import deque
+from getpass import getpass
 from pathlib import Path
 
 import json
@@ -85,6 +87,9 @@ class Server(AdministrationMixin):
         self._ssl_cert = ssl_cert
         self._ssl_key = ssl_key
 
+        if db_path == "playpalace.db":
+            db_path = str(_MODULE_DIR / "playpalace.db")
+
         # Initialize components
         self._db = Database(db_path)
         self._auth: AuthManager | None = None
@@ -121,13 +126,37 @@ class Server(AdministrationMixin):
 
         # Initialize localization
         if locales_dir is None:
-            locales_dir = _DEFAULT_LOCALES_DIR
-        Localization.init(Path(locales_dir))
+            resolved_locales = _DEFAULT_LOCALES_DIR
+        else:
+            provided_locales = Path(locales_dir)
+            if not provided_locales.is_absolute():
+                candidate = _MODULE_DIR / provided_locales
+                if candidate.exists():
+                    provided_locales = candidate
+            resolved_locales = provided_locales
+        Localization.init(resolved_locales)
         Localization.preload_bundles()
 
     async def start(self) -> None:
         """Start the server."""
-        print(f"Starting PlayPalace v{VERSION} server...")
+        # Load server configuration early to surface config errors before DB/network init
+        server_config = load_server_config(self._config_path)
+        tick_interval_ms = server_config.get("tick_interval_ms")
+        if tick_interval_ms is not None:
+            try:
+                tick_interval_ms = int(tick_interval_ms)
+            except (TypeError, ValueError) as exc:
+                print(
+                    f"ERROR: Invalid tick_interval_ms value '{tick_interval_ms}' in server configuration: {exc}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1) from exc
+            if tick_interval_ms < 1:
+                print(
+                    "ERROR: tick_interval_ms must be at least 1 millisecond.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
 
         # Enforce transport requirements before bringing up listeners
         self._validate_transport_security()
@@ -145,12 +174,12 @@ class Server(AdministrationMixin):
         # Load existing tables
         self._load_tables()
 
-        # Load server configuration
-        server_config = load_server_config()
-        tick_interval_ms = server_config.get("tick_interval_ms")
-
         # Initialize virtual bots
-        self._virtual_bots.load_config()
+        try:
+            self._virtual_bots.load_config()
+        except ValueError as exc:
+            print(f"ERROR: Invalid virtual bot configuration: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
         loaded = self._virtual_bots.load_state()
         if loaded > 0:
             print(f"Restored {loaded} virtual bots from previous session.")
@@ -171,13 +200,13 @@ class Server(AdministrationMixin):
             print(
                 "WARNING: Running without TLS (ws://). Credentials will be sent in plaintext."
             )
-        print(f"Max inbound websocket message size: {self._ws_max_message_size} bytes")
+        if self._ws_max_message_size != DEFAULT_WS_MAX_MESSAGE_BYTES:
+            print(f"Max inbound websocket message size: {self._ws_max_message_size} bytes")
 
         # Start tick scheduler
         self._tick_scheduler = TickScheduler(self._on_tick, tick_interval_ms)
         await self._tick_scheduler.start()
-        if tick_interval_ms:
-            print(f"Tick interval: {tick_interval_ms}ms ({1000 // tick_interval_ms} ticks/sec)")
+        # Tick interval message suppressed by default (configurable via config.toml).
 
         protocol = "wss" if self._ssl_cert else "ws"
         print(f"Server running on {protocol}://{self.host}:{self.port}")
@@ -275,11 +304,23 @@ class Server(AdministrationMixin):
                 rate_cfg, "registration_window_seconds", self._registration_ip_window, minimum=1
             )
 
+
     def _validate_transport_security(self) -> None:
-        if not self._ssl_cert and not self._allow_insecure_ws:
-            raise RuntimeError(
-                "TLS is required. Provide --ssl-cert/--ssl-key or set [network].allow_insecure_ws to true."
+        if self._allow_insecure_ws and (self._ssl_cert or self._ssl_key):
+            print(
+                "ERROR: allow_insecure_ws=true cannot be combined with SSL certificate or key. "
+                "Remove the certificate settings or disable insecure mode.",
+                file=sys.stderr,
             )
+            raise SystemExit(1)
+
+        if not self._allow_insecure_ws and (not self._ssl_cert or not self._ssl_key):
+            print(
+                "ERROR: TLS is required. Provide --ssl-cert and --ssl-key "
+                "or set [network].allow_insecure_ws to true.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
 
     @staticmethod
     def _get_client_ip(client: ClientConnection) -> str:
@@ -745,14 +786,14 @@ class Server(AdministrationMixin):
             await client.send({"type": "speak", "text": throttle_message})
             return
 
-        # Check if this will be a user that needs approval (not the first user)
-        needs_approval = self._db.get_user_count() > 0
+        # All self-registered users require approval.
+        needs_approval = True
 
         # Try to register the user
         if self._auth.register(username, password):
             await client.send({
                 "type": "speak",
-                "text": "Registration successful! You can now log in with your credentials."
+                "text": "Registration successful! Your account is waiting for approval."
             })
             # Notify admins of new account request (only if user needs approval)
             if needs_approval:
@@ -2899,7 +2940,133 @@ async def run_server(
 
     loop.set_exception_handler(_asyncio_exception_handler)
 
-    server = Server(host=host, port=port, ssl_cert=ssl_cert, ssl_key=ssl_key)
+    config_path = _MODULE_DIR / "config.toml"
+    example_path = _MODULE_DIR / "config.example.toml"
+    db_path = _MODULE_DIR / "playpalace.db"
+
+    if not config_path.exists():
+        if not example_path.exists():
+            print(
+                f"ERROR: Missing configuration template '{example_path}'.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        try:
+            shutil.copyfile(example_path, config_path)
+        except OSError as exc:
+            print(
+                f"ERROR: Failed to create '{config_path}' from template: {exc}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
+        print(f"Created '{config_path}' from '{example_path}'.")
+
+        print(
+            "Review server/config.toml before running in production. "
+            "TLS is required unless you explicitly allow insecure mode.\n"
+            "Run the server with:\n"
+            "  uv run python main.py --ssl-cert <cert> --ssl-key <key>\n"
+            "or set [network].allow_insecure_ws=true for local development."
+        )
+        return
+
+    db_created = False
+    needs_owner = False
+    if not db_path.exists():
+        db_created = True
+        needs_owner = True
+    else:
+        try:
+            database = Database(str(db_path))
+            database.connect()
+            user_count = database.get_user_count()
+            owner = database.get_server_owner()
+            needs_owner = user_count == 0 or owner is None
+            database.close()
+        except Exception as exc:
+            print(f"ERROR: Failed to open database '{db_path}': {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+
+    if needs_owner:
+        from server.cli import bootstrap_owner
+
+        if db_created:
+            print(f"Creating database at '{db_path}'.")
+        else:
+            print("No server owner found in the database. Creating one now.")
+
+        if not sys.stdin.isatty():
+            print(
+                "ERROR: Cannot prompt for a server owner in a non-interactive session. "
+                "Run `uv run python -m server.cli bootstrap-owner --username <name>` "
+                "to create the initial owner.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        min_user_len = DEFAULT_USERNAME_MIN_LENGTH
+        max_user_len = DEFAULT_USERNAME_MAX_LENGTH
+        min_pass_len = DEFAULT_PASSWORD_MIN_LENGTH
+        max_pass_len = DEFAULT_PASSWORD_MAX_LENGTH
+        try:
+            with open(config_path, "rb") as f:
+                data = tomllib.load(f)
+            auth_cfg = data.get("auth")
+            if isinstance(auth_cfg, dict):
+                min_user_len = int(auth_cfg.get("username_min_length", min_user_len))
+                max_user_len = int(auth_cfg.get("username_max_length", max_user_len))
+                min_pass_len = int(auth_cfg.get("password_min_length", min_pass_len))
+                max_pass_len = int(auth_cfg.get("password_max_length", max_pass_len))
+        except Exception:
+            pass
+
+        while True:
+            username = input(f"Server owner username ({min_user_len}-{max_user_len} chars): ").strip()
+            if not username:
+                print("Username cannot be empty.")
+                continue
+            if not (min_user_len <= len(username) <= max_user_len):
+                print(
+                    f"Username must be between {min_user_len} and {max_user_len} characters."
+                )
+                continue
+            break
+        while True:
+            password = getpass(f"Server owner password ({min_pass_len}-{max_pass_len} chars): ")
+            if not password:
+                print("Password cannot be empty.")
+                continue
+            if not (min_pass_len <= len(password) <= max_pass_len):
+                print(
+                    f"Password must be between {min_pass_len} and {max_pass_len} characters."
+                )
+                continue
+            confirm = getpass("Confirm password: ")
+            if password != confirm:
+                print("Passwords do not match. Try again.")
+                continue
+            break
+
+        try:
+            bootstrap_owner(
+                db_path=str(db_path),
+                username=username,
+                password=password,
+                quiet=True,
+            )
+            print(f"Created server owner '{username}'.")
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+
+    print(f"Starting PlayPalace v{VERSION} server...")
+    server = Server(
+        host=host,
+        port=port,
+        ssl_cert=ssl_cert,
+        ssl_key=ssl_key,
+        db_path=str(db_path),
+    )
     await server.start()
 
     try:

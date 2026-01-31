@@ -1,5 +1,5 @@
 # PlayPalace Server Configuration
-# Copy this file to config.toml and customize as needed.
+# Important: Copy this file to config.toml first. Ccustomize as needed.
 
 [auth]
 # These limits are enforced during both login and registration.
@@ -27,9 +27,24 @@ tick_interval_ms = 50
 [virtual_bots]
 # Bot names - these will be used for virtual bot usernames
 names = [
-    "Alex", "Jordan", "Taylor", "Morgan", "Casey",
-    "Riley", "Quinn", "Avery", "Skyler", "Jamie",
-    "Phoenix", "River", "Sage", "Rowan", "Finley"
+    "Smith", "Bastardo", "Scorpion", "Speakertest", "Kitana",
+    "Assembly_programmer", "Liu_kang", "Omega-alpha", "Alpha-omega", "Gama8",
+    "Electric-bastard", "Yamaha", "Jupiter", "Mars", "Artemis",
+    "Fire-lightning", "New_play", "Y2k-breaker", "R2dbag", "Subzero",
+    "H4mg", "4theplaying", "@mazing", "Virus", "Swordswing45",
+    "Extremekiller", "Tornado26", "Legend", "Gamesmaster", "Angel",
+    "Sa", "Gamerstorm", "Eternalgamer", "Sonic_ninja", "Summer",
+    "Sniper_70", "Blindgamer", "Nightblade", "Darkblade", "Dastardo",
+    "Boxer", "Music_and_lasers", "Ak47", "Hacker", "De_best",
+    "Flying_processor", "Best_gamer", "Destructionmaster", "Braillegamer", "Braillenote",
+    "Lasergun", "Michael", "Anna", "Emma", "Matt",
+    "Steamtrain", "Star06", "Cyrus", "Godlygamer", "Megagaming",
+    "Roflgamer_official", "Randomuser", "Capturer", "Commander", "Death",
+    "Timemaster", "Chronos", "Titan", "Aria", "Ares",
+    "Assassin", "Ball", "Master_fighter", "Lol", "Ultranovagaming",
+    "Silva", "Lily", "Yeet", "Mortalkombat", "Gun",
+    "Kai", "Sauce_code", "Lasergamer", "Still_thinking", "Still_existing",
+    "Never_existed", "Bladethegamer", "Bestgame"
 ]
 
 # Timing settings (in ticks, 50ms each = 20 ticks/sec)
@@ -96,37 +111,37 @@ max_bots_per_table = 4
 
 [virtual_bots.bot_groups.hosts]
 # Tag specific bots and optionally pin them to a profile
-bots = ["Alex", "Jordan", "Taylor"]
+bots = ["Smith", "Bastardo", "Scorpion"]
 profile = "host"
 
 [virtual_bots.bot_groups.patrons]
-bots = ["Morgan", "Casey", "Riley", "Quinn"]
+bots = ["Speakertest", "Kitana", "Assembly_programmer", "Liu_kang"]
 profile = "patron"
 
 [virtual_bots.bot_groups.mixers]
-bots = ["Avery", "Skyler", "Jamie", "Phoenix", "River", "Sage", "Rowan", "Finley"]
+bots = ["Omega-alpha", "Alpha-omega", "Gama8", "Electric-bastard", "Yamaha", "Jupiter", "Mars", "Artemis"]
 profile = "mixer"
 
 # Optional guided table rules pin bots to specific tables/channels.
 # Each rule lists the bot groups allowed to fill it, the enforced bot counts,
 # and the deterministic priority (lower numbers first). Tables only host one game
 # at a time, so add multiple entries if you want the same profile across games.
-[[virtual_bots.guided_tables]]
-table = "the table"
-game = "crazyeights"
-bot_groups = ["hosts", "patrons", "mixers"]
-min_bots = 4
-max_bots = 4
-priority = 10
+# [[virtual_bots.guided_tables]]
+# table = "the table"
+# game = "crazyeights"
+# bot_groups = ["hosts", "patrons", "mixers"]
+# min_bots = 0  # Raise this to require a minimum number of bots.
+# max_bots = 4
+# priority = 10
 # profile = "mixer"  # Uncomment to force every assigned bot to behave like a mixer here
-
-[[virtual_bots.guided_tables]]
-table = "scopa_lounge"
-game = "scopa"
-bot_groups = ["mixers"]
-min_bots = 2
-max_bots = 4
-priority = 25
+#
+# [[virtual_bots.guided_tables]]
+# table = "scopa_lounge"
+# game = "scopa"
+# bot_groups = ["mixers"]
+# min_bots = 1
+# max_bots = 4
+# priority = 25
 # Optional tick-based scheduling: run this lounge for half of each 60-second (1200-tick) cycle
-cycle_ticks = 1200
-active_ticks = [0, 600]
+# cycle_ticks = 1200
+# active_ticks = [0, 600]
