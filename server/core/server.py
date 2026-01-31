@@ -2995,11 +2995,33 @@ async def run_server(
         else:
             print("No server owner found in the database. Creating one now.")
 
+        min_user_len = DEFAULT_USERNAME_MIN_LENGTH
+        max_user_len = DEFAULT_USERNAME_MAX_LENGTH
+        min_pass_len = DEFAULT_PASSWORD_MIN_LENGTH
+        max_pass_len = DEFAULT_PASSWORD_MAX_LENGTH
+        try:
+            with open(config_path, "rb") as f:
+                data = tomllib.load(f)
+            auth_cfg = data.get("auth")
+            if isinstance(auth_cfg, dict):
+                min_user_len = int(auth_cfg.get("username_min_length", min_user_len))
+                max_user_len = int(auth_cfg.get("username_max_length", max_user_len))
+                min_pass_len = int(auth_cfg.get("password_min_length", min_pass_len))
+                max_pass_len = int(auth_cfg.get("password_max_length", max_pass_len))
+        except Exception:
+            pass
+
         while True:
             username = input("Server owner username: ").strip()
-            if username:
-                break
-            print("Username cannot be empty.")
+            if not username:
+                print("Username cannot be empty.")
+                continue
+            if not (min_user_len <= len(username) <= max_user_len):
+                print(
+                    f"Username must be between {min_user_len} and {max_user_len} characters."
+                )
+                continue
+            break
         while True:
             password = getpass("Server owner password: ")
             confirm = getpass("Confirm password: ")
@@ -3008,6 +3030,11 @@ async def run_server(
                 continue
             if not password:
                 print("Password cannot be empty.")
+                continue
+            if not (min_pass_len <= len(password) <= max_pass_len):
+                print(
+                    f"Password must be between {min_pass_len} and {max_pass_len} characters."
+                )
                 continue
             break
 
@@ -3022,8 +3049,6 @@ async def run_server(
         except RuntimeError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
-        if db_created:
-            print(f"Created database at '{db_path}'.")
 
     server = Server(
         host=host,
