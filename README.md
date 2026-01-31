@@ -34,6 +34,8 @@ Common options:
 - `--ssl-cert PATH` - SSL certificate for WSS (secure WebSocket)
 - `--ssl-key PATH` - SSL private key for WSS
 
+If running for the first time, you will be prompted for a username/password to create the first owner account. The default config file will also be copied.
+
 ### Running with SSL/WSS (Secure WebSocket)
 
 To run the server with SSL encryption (required for production deployments):
@@ -87,7 +89,7 @@ password_min_length = 8
 password_max_length = 128
 
 [auth.rate_limits]
-login_per_minute = 5
+login_per_minute = 
 login_failures_per_minute = 3
 registration_per_minute = 2
 ```
