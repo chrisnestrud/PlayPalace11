@@ -1,5 +1,6 @@
 """WebSocket server for client connections."""
 
+import errno
 import json
 import ssl
 import sys
@@ -98,6 +99,18 @@ class WebSocketServer:
                 f"ERROR: Failed to bind WebSocket server on {self.host}:{self.port}: {exc}",
                 file=sys.stderr,
             )
+            if exc.errno in (errno.EADDRINUSE, 48, 10048):
+                print(
+                    "Hint: That port is already in use. "
+                    "If another PlayPalace server is running, stop it or choose a new port.",
+                    file=sys.stderr,
+                )
+                print(
+                    "To find the process: `lsof -i :{port}` or `ss -ltnp | rg :{port}`".format(
+                        port=self.port
+                    ),
+                    file=sys.stderr,
+                )
             raise SystemExit(1) from exc
         
         protocol = "wss" if self._ssl_context else "ws"
