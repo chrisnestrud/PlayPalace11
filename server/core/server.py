@@ -788,14 +788,14 @@ class Server(AdministrationMixin):
             await client.send({"type": "speak", "text": throttle_message})
             return
 
-        # Check if this will be a user that needs approval (not the first user)
-        needs_approval = self._db.get_user_count() > 0
+        # All self-registered users require approval.
+        needs_approval = True
 
         # Try to register the user
         if self._auth.register(username, password):
             await client.send({
                 "type": "speak",
-                "text": "Registration successful! You can now log in with your credentials."
+                "text": "Registration successful! Your account is waiting for approval."
             })
             # Notify admins of new account request (only if user needs approval)
             if needs_approval:
