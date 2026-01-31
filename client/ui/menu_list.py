@@ -205,9 +205,13 @@ class MenuList(wx.ListBox):
         
         custom_sound = None
         if selection_index != wx.NOT_FOUND:
-            data = self.GetClientData(selection_index)
-            if isinstance(data, dict):
-                custom_sound = data.get("sound")
+            try:
+                data = self.GetClientData(selection_index)
+                if isinstance(data, dict):
+                    custom_sound = data.get("sound")
+            except (wx._core.wxAssertionError, RuntimeError, AttributeError):
+                # Silently ignore when client data is not available
+                pass
         
         if custom_sound:
             self.sound_manager.play(custom_sound)
