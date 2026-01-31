@@ -31,6 +31,7 @@ from ..messages.localization import Localization
 
 
 VERSION = "11.0.0"
+BOOTSTRAP_WARNING_ENV = "PLAYPALACE_SUPPRESS_BOOTSTRAP_WARNING"
 
 DEFAULT_USERNAME_MIN_LENGTH = 3
 DEFAULT_USERNAME_MAX_LENGTH = 32
@@ -106,8 +107,15 @@ class Server(AdministrationMixin):
 
         # Initialize localization
         if locales_dir is None:
-            locales_dir = _DEFAULT_LOCALES_DIR
-        Localization.init(Path(locales_dir))
+            resolved_locales = _DEFAULT_LOCALES_DIR
+        else:
+            provided_locales = Path(locales_dir)
+            if not provided_locales.is_absolute():
+                candidate = _MODULE_DIR / provided_locales
+                if candidate.exists():
+                    provided_locales = candidate
+            resolved_locales = provided_locales
+        Localization.init(resolved_locales)
         Localization.preload_bundles()
 
     async def start(self) -> None:
@@ -122,6 +130,7 @@ class Server(AdministrationMixin):
         promoted_user = self._db.initialize_trust_levels()
         if promoted_user:
             print(f"User '{promoted_user}' has been promoted to server owner (trust level 3).")
+        self._warn_if_no_users()
 
         # Load existing tables
         self._load_tables()
@@ -185,6 +194,23 @@ class Server(AdministrationMixin):
         self._db.close()
 
         print("Server stopped.")
+
+    def _warn_if_no_users(self) -> None:
+        """Print a warning if no user accounts exist yet."""
+        if os.environ.get(BOOTSTRAP_WARNING_ENV):
+            return
+        try:
+            if self._db.get_user_count() > 0:
+                return
+        except Exception:
+            return
+
+        print(
+            "WARNING: No user accounts exist. Run "
+            "`uv run python -m server.cli bootstrap-owner --username <name>` "
+            "to create an initial administrator before exposing this server on the network. "
+            f"Set {BOOTSTRAP_WARNING_ENV}=1 to suppress this warning for CI or local testing."
+        )
 
     def _load_config_settings(self) -> None:
         """Load credential and network limits from config.toml if available."""
