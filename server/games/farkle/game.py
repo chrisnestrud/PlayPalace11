@@ -683,7 +683,15 @@ class FarkleGame(Game):
 
         # Update scoring actions based on new roll
         self.update_scoring_actions(farkle_player)
-        self.rebuild_player_menu(farkle_player)
+
+        # Focus on the first (highest-scoring) combination
+        combos = get_available_combinations(farkle_player.current_roll)
+        if combos:
+            combo_type, number, _ = combos[0]
+            selection_id = f"score_{combo_type}_{number}"
+            self.update_player_menu(farkle_player, selection_id=selection_id)
+        else:
+            self.rebuild_player_menu(farkle_player)
 
     def _action_take_combo(self, player: Player, action_id: str) -> None:
         """Handle taking a scoring combination."""
