@@ -3024,10 +3024,6 @@ async def run_server(
             break
         while True:
             password = getpass("Server owner password: ")
-            confirm = getpass("Confirm password: ")
-            if password != confirm:
-                print("Passwords do not match. Try again.")
-                continue
             if not password:
                 print("Password cannot be empty.")
                 continue
@@ -3035,6 +3031,10 @@ async def run_server(
                 print(
                     f"Password must be between {min_pass_len} and {max_pass_len} characters."
                 )
+                continue
+            confirm = getpass("Confirm password: ")
+            if password != confirm:
+                print("Passwords do not match. Try again.")
                 continue
             break
 
