@@ -391,6 +391,9 @@ class LudoGame(Game):
             return Visibility.HIDDEN
         if self.current_player != player:
             return Visibility.HIDDEN
+        ludo_player: LudoPlayer = player  # type: ignore
+        if ludo_player.move_options:
+            return Visibility.HIDDEN
         return Visibility.VISIBLE
 
     def _is_move_token_enabled(self, player: Player, token_index: int) -> str | None:
@@ -454,7 +457,11 @@ class LudoGame(Game):
 
         moveable = self._get_moveable_tokens(ludo_player, self.last_roll)
         if not moveable:
-            self.broadcast_l("ludo-no-moves", player=player.name)
+            self.broadcast_personal_l(
+                player,
+                "ludo-you-no-moves",
+                "ludo-no-moves",
+            )
             self._end_turn()
             return
 

@@ -8,6 +8,7 @@ ludo-select-token = Select token to move:
 ludo-roll = { $player } rolls a { $roll }.
 ludo-you-roll = You roll a { $roll }.
 ludo-no-moves = { $player } has no valid moves.
+ludo-you-no-moves = You have no valid moves.
 ludo-enter-board = { $player } ({ $color }) enters token { $token } onto the board.
 ludo-move-track = { $player } ({ $color }) moves token { $token } to position { $position }.
 ludo-enter-home = { $player } ({ $color }) moves token { $token } into the home column.
