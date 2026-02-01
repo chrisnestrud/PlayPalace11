@@ -11,11 +11,7 @@ from pathlib import Path
 from websockets.asyncio.client import connect
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from constants import (
-    USERNAME_LENGTH_HINT,
-    PASSWORD_LENGTH_HINT,
-    DEFAULT_CREDENTIAL_HINT,
-)
+from constants import USERNAME_LENGTH_HINT, PASSWORD_LENGTH_HINT
 
 
 class RegistrationDialog(wx.Dialog):
@@ -48,11 +44,6 @@ class RegistrationDialog(wx.Dialog):
             label="Your account will require admin approval before you can log in.",
         )
         sizer.Add(info_text, 0, wx.ALL | wx.CENTER, 5)
-
-        policy_text = wx.StaticText(panel, label=DEFAULT_CREDENTIAL_HINT)
-        policy_text.Wrap(440)
-        policy_text.SetForegroundColour(wx.Colour(90, 90, 90))
-        sizer.Add(policy_text, 0, wx.ALL | wx.LEFT | wx.RIGHT, 10)
 
         # Username
         username_label = wx.StaticText(panel, label="&Username:")

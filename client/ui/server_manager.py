@@ -8,7 +8,6 @@ from pathlib import Path
 # Add parent directory to path to import config_manager
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config_manager import ConfigManager
-from constants import DEFAULT_CREDENTIAL_HINT
 
 
 class AccountEditorDialog(wx.Dialog):
@@ -111,8 +110,6 @@ class AccountEditorDialog(wx.Dialog):
         # Buttons
         button_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        credential_policy_btn = wx.Button(panel, label="Default Credential &Policy")
-        button_sizer.Add(credential_policy_btn, 0, wx.RIGHT, 5)
 
         close_btn = wx.Button(panel, wx.ID_CANCEL, "&Close")
         button_sizer.Add(close_btn, 0)
@@ -123,7 +120,6 @@ class AccountEditorDialog(wx.Dialog):
 
         # Bind events
         self.show_password_btn.Bind(wx.EVT_BUTTON, self.on_show_password)
-        credential_policy_btn.Bind(wx.EVT_BUTTON, self.on_credential_policy)
         close_btn.Bind(wx.EVT_BUTTON, self.on_close)
 
         # Auto-save on field changes
@@ -280,14 +276,6 @@ class AccountEditorDialog(wx.Dialog):
                 notes=notes,
             )
         return True
-
-    def on_credential_policy(self, event):
-        """Handle credential policy button click."""
-        wx.MessageBox(
-            DEFAULT_CREDENTIAL_HINT,
-            "Credential Policy",
-            wx.OK | wx.ICON_INFORMATION,
-        )
 
     def on_close(self, event):
         """Handle close button click."""
