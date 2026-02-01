@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 - `server/` is the v11 game server (modern Python). Core modules live in `server/core/`, game implementations in `server/games/`, shared game helpers in `server/game_utils/`, auth in `server/auth/`, persistence in `server/persistence/`, and localization in `server/messages/`.
 - `server/tests/` contains pytest test suites (unit, integration, and play tests).
-- `client/` is the wxPython desktop client (ported from v10) with UI code under `client/ui/`.
+- `client/` is a wxPython desktop client with UI code under `client/ui/`.
 - Design notes live in `server/plans/`.
 
 ## Build, Test, and Development Commands
@@ -24,11 +24,15 @@ This repo uses Python 3.11+ and `uv` for dependency management.
 - Python uses 4-space indentation and standard PEP 8 naming: `snake_case` for functions/vars, `CapWords` for classes, `UPPER_SNAKE_CASE` for constants.
 - Server state is largely dataclass-based; prefer explicit, imperative state changes in game logic.
 - Follow existing patterns in `server/games/` and `server/game_utils/` rather than introducing new abstractions.
+- Keep changes minimal and focused; reuse existing helpers and avoid over-engineering.
+- Docstrings use Google-style format; keep them updated when behavior changes.
 
 ## Testing Guidelines
 - Frameworks: `pytest` and `pytest-asyncio`.
 - Naming: test files in `server/tests/` use `test_*.py` and test functions use `test_*`.
 - Include play tests when adding new games or changing serialization/persistence logic.
+## Localization Notes
+- When adding or changing strings, update all locales in `server/locales/` (and `languages.ftl` if applicable).
 
 ## Commit & Pull Request Guidelines
 - Recent commit messages are short, sentence-case descriptions (e.g., “Modernize server networking…”). Follow that style; keep it one line and descriptive.
