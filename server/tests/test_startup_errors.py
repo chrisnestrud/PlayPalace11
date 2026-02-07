@@ -18,8 +18,9 @@ def _write_config(tmp_path: Path, allow_insecure: bool, tick_interval: int | Non
 
 def test_localization_missing_directory(tmp_path, capsys):
     missing_locales = tmp_path / "missing_locales"
+    Server(locales_dir=missing_locales)
     with pytest.raises(SystemExit):
-        Server(locales_dir=missing_locales)
+        Localization.preload_bundles()
     captured = capsys.readouterr()
     assert "Localization directory" in captured.err
     # Restore localization path for subsequent tests
