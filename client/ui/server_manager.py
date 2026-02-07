@@ -8,6 +8,11 @@ from pathlib import Path
 # Add parent directory to path to import config_manager
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config_manager import ConfigManager
+from ui.config_sharing import (
+    ConfigSharingDialog,
+    try_load_export_file,
+    format_export_timestamp,
+)
 
 
 class AccountEditorDialog(wx.Dialog):
@@ -188,7 +193,7 @@ class AccountEditorDialog(wx.Dialog):
             return True  # Empty is allowed
         # Lowercase and validate against pattern
         email_lower = email.lower()
-        pattern = r'^[a-z0-9_.-]+@[a-z0-9_.-]+$'
+        pattern = r'^[a-z0-9_.+-]+@[a-z0-9_.-]+$'
         return bool(re.match(pattern, email_lower))
 
     def _validate_for_close(self) -> bool:
@@ -858,6 +863,17 @@ class ServerManagerDialog(wx.Dialog):
         self.default_options_btn.Bind(wx.EVT_BUTTON, self.on_default_options_profile)
         sizer.Add(self.default_options_btn, 0, wx.LEFT | wx.RIGHT, 10)
 
+        # Import/Export buttons
+        sharing_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.import_btn = wx.Button(panel, label="&Import Server Profiles")
+        self.import_btn.Bind(wx.EVT_BUTTON, self._on_import_profiles)
+        sharing_sizer.Add(self.import_btn, 0, wx.RIGHT, 5)
+
+        self.export_btn = wx.Button(panel, label="E&xport Server Profiles")
+        self.export_btn.Bind(wx.EVT_BUTTON, self._on_export_profiles)
+        sharing_sizer.Add(self.export_btn, 0)
+        sizer.Add(sharing_sizer, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+
         # Close button
         close_sizer = wx.BoxSizer(wx.HORIZONTAL)
         close_btn = wx.Button(panel, wx.ID_CANCEL, "&Close")
@@ -961,6 +977,118 @@ class ServerManagerDialog(wx.Dialog):
         dlg.ShowModal()
         dlg.Destroy()
         self._refresh_servers_list()
+
+    def _on_export_profiles(self, event):
+        """Handle export server profiles button click."""
+        servers = self.config_manager.get_all_servers()
+        if not servers:
+            wx.MessageBox(
+                "No servers to export.",
+                "Export",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+
+        dlg = ConfigSharingDialog(
+            self, self.config_manager, ConfigSharingDialog.MODE_EXPORT
+        )
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def _on_import_profiles(self, event):
+        """Handle import server profiles button click."""
+        imported_data = self._load_import_file()
+        if imported_data is None:
+            return
+
+        dlg = ConfigSharingDialog(
+            self, self.config_manager, ConfigSharingDialog.MODE_IMPORT,
+            imported_data=imported_data,
+        )
+        if dlg._no_data:
+            dlg.Destroy()
+            wx.MessageBox(
+                "There is no data to import. All servers in this file either already "
+                "exist with no changes, or the file contains no servers.",
+                "Nothing to Import",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+
+        result = dlg.ShowModal()
+        dlg.Destroy()
+
+        if result == wx.ID_OK:
+            # Refresh servers list, preserving selection index
+            prev_idx = self.servers_list.GetSelection()
+            self._refresh_servers_list()
+            if self.servers_list.GetCount() > 0:
+                new_idx = min(prev_idx, self.servers_list.GetCount() - 1)
+                if new_idx >= 0:
+                    self.servers_list.SetSelection(new_idx)
+
+    def _load_import_file(self):
+        """Load an import file, with auto-detection and browser fallback.
+
+        Returns:
+            Parsed dict if a valid file was loaded, or None to abort.
+        """
+        auto_path = Path.cwd() / "identities-export.json"
+
+        # Auto-detect file in cwd
+        if auto_path.exists():
+            data = try_load_export_file(str(auto_path))
+            if data:
+                desc = data.get("description", "")
+                ts = format_export_timestamp(data.get("timestamp", 0))
+                result = wx.MessageBox(
+                    f"Found export file in current directory.\n\n"
+                    f"Description: {desc}\n"
+                    f"Date: {ts}\n\n"
+                    f"Would you like to load this file?",
+                    "Import Server Profiles",
+                    wx.YES_NO | wx.ICON_QUESTION,
+                )
+                if result == wx.YES:
+                    return data
+
+        # File browser loop
+        while True:
+            file_dlg = wx.FileDialog(
+                self,
+                "Select Export File to Import",
+                defaultDir=str(Path.cwd()),
+                wildcard="JSON files (*.json)|*.json",
+                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+            )
+            if file_dlg.ShowModal() != wx.ID_OK:
+                file_dlg.Destroy()
+                return None
+            chosen_path = file_dlg.GetPath()
+            file_dlg.Destroy()
+
+            data = try_load_export_file(chosen_path)
+            if data is None:
+                wx.MessageBox(
+                    "The selected file is not a valid export file.",
+                    "Invalid File",
+                    wx.OK | wx.ICON_ERROR,
+                )
+                continue
+
+            # Confirm file details
+            desc = data.get("description", "")
+            ts = format_export_timestamp(data.get("timestamp", 0))
+            result = wx.MessageBox(
+                f"Description: {desc}\n"
+                f"Date: {ts}\n\n"
+                f"Would you like to import this file?",
+                "Confirm Import File",
+                wx.YES_NO | wx.ICON_QUESTION,
+            )
+            if result == wx.YES:
+                return data
+            # If No, return to file browser
 
     def on_close(self, event):
         """Handle close button click."""
