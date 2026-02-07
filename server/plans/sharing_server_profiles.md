@@ -12,13 +12,10 @@ Therefore, both the user exporting the data and the user importing data, should 
 To accomplish this flexible system, we only need one screen, an import / export config screen. As well as tracking the mode "import" or "export".
 Both modes will have almost identical controls, however there will be slight differences. Importing data will have more options since it is more complex and has the potential to merge with existing data.
 To import or export data, the main server manager screen will have a button for each operation.
-All checkboxes in the dialog start unchecked by default in both modes.
-
-## Important Temporary Note
-Option profiles at the current moment are empty. This is expected at the time of adding these features. It should still behave as normal, since exporting / importing things like option profiles and user accounts just coppies the object.
+All checkboxes in the dialog start unchecked by default in both modes, including servers in the available servers list. The "included types" visibility filter is the exception — all its items are checked by default (showing all control types).
 
 ## Updated server manager main layout
-After the add server button, add the "import server profiles" and "export server profiles" buttons.
+After the default options profile button, add the "import server profiles" and "export server profiles" buttons.
 
 ## Config Sharing Dialog layout
 These controls are present regardless of the mode.
@@ -69,7 +66,7 @@ This is the simpler operation. It uses the current data from "identities.json" t
 
 ### Saving Confirmation
 After the user presses the "start operation" button, ask a confirmation for each export warning.
-When saving, ask for a description for this export, and add the unix timestamp when it occurred.
+When saving, ask for a description for this export using a simple text entry dialog. The description is required and cannot be empty. Add the unix timestamp when the export occurred.
 Prompt the user with a save file dialog. The default filename should be "identities-export.json" and the default directory should be the current working directory.
 
 ### Export Warnings
@@ -80,8 +77,8 @@ Some servers will ban the account owner and anyone else who attempts to access t
 
 ### Saving to disc
 Do not include servers that are unchecked in the available servers list.
-Clear unused fields instead of deleting them from the data to make importing easier. This includes both fields the user did not select (e.g., unchecked user accounts results in an empty accounts array) and specific sensitive fields. The server's trust certificate and last connected user account should always be cleared.
-After exporting, return to the server manager main screen.
+Clear unused fields instead of deleting them from the data to make importing easier. This includes both fields the user did not select (e.g., unchecked user accounts results in an empty accounts array) and specific sensitive fields. The server's trust certificate and last connected user account should always be cleared. Server IDs and account IDs are kept as-is in the exported data.
+After exporting, display a success summary and return to the server manager main screen.
 
 ## Importing data
 Importing data is more complex. It uses a json file to populate the available servers list. The data is also compared against the client's current configuration in the config manager.
@@ -100,14 +97,18 @@ If all servers are removed after this filtering (no new servers and no existing 
 After the user presses the "start operation" button, ask a confirmation for each import warning.
 The user may have some servers in common with the imported data. An existing server is determined by matching server address.
 For each server, the user may have some user accounts in common with the imported data. An existing user account is determined by matching username.
-If any fields are different than the existing account info such as password or email, ask if the user wants to update the account, listing the field names that have been changed. Notes are excluded from this comparison. Ask for each existing account. Include an "apply to all" option in this prompt so the user can bulk-accept or bulk-decline updates for all accounts on this server without stepping through every account individually.
+If any fields are different than the existing account info such as password or email, ask if the user wants to update the account, listing the field names that have been changed. Notes are excluded from this comparison. Ask for each existing account. The prompt options are:
+- Update
+- Skip
+- Update all for server "{server name}"
+- Skip all for server "{server name}"
+New accounts (no matching username) are silently added without prompting when "add user accounts" is checked for that server.
 For new servers, if options profile is unchecked, it uses the user's default options profile.
 
 ### Notes handling
 Notes fields (on both servers and user accounts) are excluded from change comparisons. When the user updates a server or account, imported notes are appended to the existing notes with a header:
-
-Imported Notes From Export (export description, export date):
-(imported notes content)
+"\n\n" if existing notes +
+"Imported Notes From Export (export description, export date):\n#imported notes content"
 
 Multiple imports will stack these headers, which is acceptable.
 
@@ -119,7 +120,15 @@ Some servers will ban the account owner and anyone else who attempts to access t
 
 option profiles (for any server):
 "Option profiles will overwrite your existing settings. Do you want to proceed?"
+Note: Options profile import is a full replacement, not a merge.
+
+### Error handling
+If an error occurs during import or export, attempt to rollback any partial changes. Display an error message to the user.
 
 ### Saving to config
-After the data is imported, save the "identities.json" file, and return to the server manager main screen.
-Update the existing server list with any new servers that were added.
+After the data is imported, save the "identities.json" file. Display a success summary (e.g., "Imported 2 new servers and updated 3 accounts") and return to the server manager main screen.
+Repopulate the servers list, keeping the initial index if possible, 0 if not.
+
+## Implementation Guidelines
+The dialog, export/import logic, and merge logic all belong in `client/ui/config_sharing.py`. The server manager main screen buttons (import/export) will open this dialog.
+If any of these helpers are later found to be broadly useful, they can be moved to `config_manager.py`.
