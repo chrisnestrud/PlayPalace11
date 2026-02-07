@@ -13,6 +13,7 @@ dependencies = [
     "websockets>=14.0",
     "sound-lib>=0.2.2",
     "pydantic>=2.0",
+    "jsonschema>=4.21",
 ]
 
 [project.scripts]

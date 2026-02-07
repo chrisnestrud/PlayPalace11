@@ -1,6 +1,5 @@
-"""Network and websocket handling."""
+"""Network helpers."""
 
 from .protocol import PacketType, Packet
-from .websocket_server import WebSocketServer
 
-__all__ = ["PacketType", "Packet", "WebSocketServer"]
+__all__ = ["PacketType", "Packet"]

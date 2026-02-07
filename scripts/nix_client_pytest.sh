@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CLIENT_DIR="${REPO_ROOT}/client"
 PY_PREFIX="${REPO_ROOT}/.nix-python"
 PYTHON_SITE="${PY_PREFIX}/lib/python3.11/site-packages"
-REQUIRED_PACKAGES=(pytest pydantic)
+REQUIRED_PACKAGES=(pytest pydantic jsonschema)
 
 if [[ ! -d "${PYTHON_SITE}" ]]; then
     mkdir -p "${PYTHON_SITE}"

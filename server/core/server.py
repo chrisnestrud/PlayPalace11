@@ -21,6 +21,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python <3.11 fallback when available
     import tomli as tomllib  # type: ignore[import]
 
+from pydantic import ValidationError
+
 from .state import ModeSnapshot, ServerLifecycleState, ServerMode
 from .tick import TickScheduler, load_server_config
 from .administration import AdministrationMixin
@@ -34,10 +36,12 @@ from ..users.base import MenuItem, EscapeBehavior, TrustLevel
 from ..users.preferences import UserPreferences, DiceKeepingStyle
 from ..games.registry import GameRegistry, get_game_class
 from ..messages.localization import Localization
+from ..network.packet_models import CLIENT_TO_SERVER_PACKET_ADAPTER
 
 
 VERSION = "11.0.0"
 BOOTSTRAP_WARNING_ENV = "PLAYPALACE_SUPPRESS_BOOTSTRAP_WARNING"
+PACKET_LOGGER = logging.getLogger("playpalace.packets")
 
 DEFAULT_USERNAME_MIN_LENGTH = 3
 DEFAULT_USERNAME_MAX_LENGTH = 32
@@ -773,6 +777,14 @@ class Server(AdministrationMixin):
 
     async def _on_client_message(self, client: ClientConnection, packet: dict) -> None:
         """Handle incoming message from client."""
+        try:
+            packet_model = CLIENT_TO_SERVER_PACKET_ADAPTER.validate_python(packet)
+            packet = packet_model.model_dump(exclude_none=True)
+        except ValidationError as exc:
+            identifier = client.username or client.address
+            PACKET_LOGGER.warning("Dropping invalid packet from %s: %s", identifier, exc)
+            return
+
         packet_type = packet.get("type")
 
         if packet_type == "authorize":

@@ -2,13 +2,20 @@
 
 import errno
 import json
+import logging
 import ssl
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Coroutine
+
 import websockets
+from pydantic import ValidationError
 from websockets.asyncio.server import serve, ServerConnection
+
+from .packet_models import SERVER_TO_CLIENT_PACKET_ADAPTER
+
+PACKET_LOGGER = logging.getLogger("playpalace.packets")
 
 
 @dataclass
@@ -23,7 +30,15 @@ class ClientConnection:
     async def send(self, packet: dict) -> None:
         """Send a packet to this client."""
         try:
-            await self.websocket.send(json.dumps(packet))
+            packet_model = SERVER_TO_CLIENT_PACKET_ADAPTER.validate_python(packet)
+            payload = packet_model.model_dump(exclude_none=True)
+        except ValidationError as exc:
+            identifier = self.username or self.address
+            PACKET_LOGGER.warning("Refusing to send invalid packet to %s: %s", identifier, exc)
+            return
+
+        try:
+            await self.websocket.send(json.dumps(payload))
         except websockets.exceptions.ConnectionClosed:
             pass
 

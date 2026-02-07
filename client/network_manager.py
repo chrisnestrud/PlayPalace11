@@ -11,9 +11,11 @@ from urllib.parse import urlparse
 import wx
 import websockets
 import ssl
+from jsonschema import ValidationError as SchemaValidationError
 from websockets.asyncio.client import connect
 
 from certificate_prompt import CertificatePromptDialog, CertificateInfo
+from packet_validator import validate_incoming, validate_outgoing
 
 
 class TLSUserDeclinedError(Exception):
@@ -41,6 +43,35 @@ class NetworkManager:
         self.should_stop = False
         self.server_url = None
         self.server_id = None
+        self._validation_errors = 0
+
+    def _validate_outgoing_packet(self, packet: dict) -> bool:
+        """Validate a packet before sending; logs and blocks invalid payloads."""
+        try:
+            validate_outgoing(packet)
+            return True
+        except SchemaValidationError as exc:
+            self._validation_errors += 1
+            wx.CallAfter(
+                self.main_window.add_history,
+                f"Blocked invalid outgoing packet #{self._validation_errors}: {exc.message}",
+                "activity",
+            )
+            return False
+
+    def _validate_incoming_packet(self, packet: dict) -> bool:
+        """Validate incoming data from the server."""
+        try:
+            validate_incoming(packet)
+            return True
+        except SchemaValidationError as exc:
+            self._validation_errors += 1
+            wx.CallAfter(
+                self.main_window.add_history,
+                f"Ignored invalid server packet #{self._validation_errors}: {exc.message}",
+                "activity",
+            )
+            return False
 
     def connect(self, server_url, username, password):
         """
@@ -138,18 +169,17 @@ class NetworkManager:
 
     async def _send_authorize(self, websocket, username, password):
         """Send the authorize packet after connecting."""
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "authorize",
-                    "username": username,
-                    "password": password,
-                    "major": 11,
-                    "minor": 0,
-                    "patch": 0,
-                }
-            )
-        )
+        packet = {
+            "type": "authorize",
+            "username": username,
+            "password": password,
+            "major": 11,
+            "minor": 0,
+            "patch": 0,
+        }
+        if not self._validate_outgoing_packet(packet):
+            raise RuntimeError("Client refused to send invalid authorize packet.")
+        await websocket.send(json.dumps(packet))
 
     async def _open_connection(self, server_url: str):
         """Open a websocket connection, handling TLS verification."""
@@ -416,6 +446,9 @@ class NetworkManager:
         if not self.connected or not self.ws or not self.loop:
             return False
 
+        if not self._validate_outgoing_packet(packet):
+            return False
+
         try:
             message = json.dumps(packet)
 
@@ -437,6 +470,9 @@ class NetworkManager:
         Args:
             packet: Dictionary received from server
         """
+        if not self._validate_incoming_packet(packet):
+            return
+
         packet_type = packet.get("type")
 
         if packet_type == "authorize_success":
