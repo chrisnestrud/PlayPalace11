@@ -8,17 +8,17 @@ hwf-set-starting-balloons = Starting balloons: { $count }
 hwf-enter-starting-balloons = Enter starting balloons:
 hwf-option-changed-starting-balloons = Starting balloons changed to { $count }.
 
-hwf-set-rack-size = Rack size: { $count }
-hwf-enter-rack-size = Enter rack size:
-hwf-option-changed-rack-size = Rack size changed to { $count }.
+hwf-set-rack-size = Letters in rack: { $count }
+hwf-enter-rack-size = Enter letters in rack:
+hwf-option-changed-rack-size = Letters in rack changed to { $count }.
 
 hwf-set-min-word-length = Min word length: { $count }
 hwf-enter-min-word-length = Enter minimum word length:
 hwf-option-changed-min-word-length = Minimum word length changed to { $count }.
 
-hwf-set-max-word-length = Max word length: { $count }
-hwf-enter-max-word-length = Enter maximum word length:
-hwf-option-changed-max-word-length = Maximum word length changed to { $count }.
+hwf-set-max-word-length = Max board length: { $count }
+hwf-enter-max-word-length = Enter maximum board length:
+hwf-option-changed-max-word-length = Maximum board length changed to { $count }.
 
 hwf-set-base-wrong-guesses = Wrong-guess bonus: { $count }
 hwf-enter-base-wrong-guesses = Enter wrong-guess bonus (added to word length):

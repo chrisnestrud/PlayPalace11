@@ -280,6 +280,57 @@ class TestHanginSpectatorVisibility:
         assert any(msg.startswith("Board modifiers:") for msg in spoken)
 
 
+class TestHanginTimelineSync:
+    """Timeline scheduling for synchronized round/turn announcements."""
+
+    def test_round_intro_delivered_to_players_and_spectators_same_tick(self):
+        game = HanginWithFriendsGame()
+        u1 = MockUser("Alice")
+        u2 = MockUser("Bob")
+        us = MockUser("Spec")
+        game.add_player("Alice", u1)
+        game.add_player("Bob", u2)
+        game.add_spectator("Spec", us)
+
+        game.on_start()
+        round_line = "Round 1. Alice is choosing a word, Bob will guess."
+        assert round_line not in u1.get_spoken_messages()
+        assert round_line not in us.get_spoken_messages()
+
+        game.on_tick()
+        assert round_line in u1.get_spoken_messages()
+        assert round_line in u2.get_spoken_messages()
+        assert round_line in us.get_spoken_messages()
+
+    def test_word_selected_turn_change_is_timeline_scheduled(self):
+        game = HanginWithFriendsGame()
+        u1 = MockUser("Alice")
+        u2 = MockUser("Bob")
+        us = MockUser("Spec")
+        p1 = game.add_player("Alice", u1)
+        p2 = game.add_player("Bob", u2)
+        game.add_spectator("Spec", us)
+        game.on_start()
+        game.phase = "choose_word"
+        game.setter_id = p1.id
+        game.guesser_id = p2.id
+        game.current_player = p1
+        game.tile_rack = list("planetzzzzzz")
+        u1.clear_messages()
+        u2.clear_messages()
+        us.clear_messages()
+
+        game.execute_action(p1, "choose_word", "planet")
+        selected_line = "Word selected. The word has 6 letters. Wrong guesses allowed: 8."
+        assert selected_line not in u2.get_spoken_messages()
+        assert selected_line not in us.get_spoken_messages()
+
+        game.on_tick()
+        assert selected_line in u1.get_spoken_messages()
+        assert selected_line in u2.get_spoken_messages()
+        assert selected_line in us.get_spoken_messages()
+
+
 class TestHanginWithFriendsPlay:
     """Play test with bots and persistence reload."""
 
@@ -1082,3 +1133,24 @@ class TestHanginCoverageEdges:
         sounds_b = game.get_user(b).get_sounds_played()
         assert any("sfx_gamewon1.ogg" in s for s in sounds_a)
         assert any("sfx_gamelost1.ogg" in s for s in sounds_b)
+
+    def test_end_screen_congrats_scoped_to_winner_only(self):
+        game = HanginWithFriendsGame()
+        ua = MockUser("A")
+        ub = MockUser("B")
+        us = MockUser("S")
+        a = game.add_player("A", ua)
+        b = game.add_player("B", ub)
+        game.add_spectator("S", us)
+        game.participant_ids = [a.id, b.id]
+        a.score = 5
+        b.score = 2
+
+        result = game.build_game_result()
+        game._show_end_screen(result)
+        items_a = ua.get_current_menu_items("game_over")
+        items_b = ub.get_current_menu_items("game_over")
+        items_s = us.get_current_menu_items("game_over")
+        assert items_a is not None and items_a[-1].text == "Congratulations you did great!"
+        assert items_b is not None and items_b[-1].text == "Leave table"
+        assert items_s is not None and items_s[-1].text == "Leave table"

@@ -22,6 +22,7 @@ from ..game_utils.game_result_mixin import GameResultMixin
 from ..game_utils.duration_estimate_mixin import DurationEstimateMixin
 from ..game_utils.game_scores_mixin import GameScoresMixin
 from ..game_utils.game_prediction_mixin import GamePredictionMixin
+from ..game_utils.timeline_mixin import TimelineMixin
 from ..game_utils.turn_management_mixin import TurnManagementMixin
 from ..game_utils.menu_management_mixin import MenuManagementMixin
 from ..game_utils.action_visibility_mixin import ActionVisibilityMixin
@@ -92,6 +93,7 @@ class Game(
     DurationEstimateMixin,
     GameScoresMixin,
     GamePredictionMixin,
+    TimelineMixin,
     TurnManagementMixin,
     MenuManagementMixin,
     ActionVisibilityMixin,
@@ -148,6 +150,7 @@ class Game(
     scheduled_sounds: list = field(
         default_factory=list
     )  # [[tick, sound, vol, pan, pitch], ...]
+    scheduled_timeline_events: list = field(default_factory=list)
     sound_scheduler_tick: int = 0  # Current tick counter
     # Action sets (serialized - actions are pure data now)
     player_action_sets: dict[str, list[ActionSet]] = field(default_factory=dict)
@@ -302,6 +305,7 @@ class Game(
         """
         # Check if duration estimation has completed
         self.check_estimate_completion()
+        self.process_scheduled_timeline_events()
 
     def on_round_timer_ready(self) -> None:
         """Handle round-timer expiry for games using RoundTransitionTimer."""

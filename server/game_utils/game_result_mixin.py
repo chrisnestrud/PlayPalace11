@@ -161,14 +161,26 @@ class GameResultMixin:
 
     def _show_end_screen(self, result: GameResult) -> None:
         """Show the end screen to all players using structured result."""
+        winner_name = result.custom_data.get("winner_name")
+        winner_id = None
+        if winner_name:
+            for p in result.player_results:
+                if p.player_name == winner_name:
+                    winner_id = p.player_id
+                    break
+
         for player in self.players:
             user = self.get_user(player)
             if user:
                 lines = self.format_end_screen(result, user.locale)
                 items = [MenuItem(text=line, id="score_line") for line in lines]
-                # Add Leave button at the end
+                leave_text = (
+                    "Congratulations you did great!"
+                    if winner_id and player.id == winner_id
+                    else Localization.get(user.locale, "leave-table")
+                )
                 items.append(MenuItem(
-                    text="Congratulations you did great!",
+                    text=leave_text,
                     id="leave_game"
                 ))
                 user.show_menu("game_over", items, multiletter=False)

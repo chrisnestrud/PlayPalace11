@@ -270,6 +270,7 @@ MODIFIER_LABELS = {
     "double_word": "double word",
     "triple_word": "triple word",
 }
+BOARD_READ_STEP_TICKS = 6
 
 
 @dataclass
@@ -665,14 +666,21 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["menu_open"])
         self.play_sound(SOUNDS["avatar"], volume=70)
         self.play_sound(SOUNDS["shuffle"], volume=85)
-        self.broadcast(
+        self._schedule_round_intro(
             f"Round {self.round}. {setter.name} is choosing a word, {guesser.name} will guess."
         )
-        setter_user = self.get_user(setter)
-        if setter_user:
-            setter_user.speak(f"Your rack is: {' '.join(l.upper() for l in self.tile_rack)}", "table")
+        rack_text = f"Your rack is: {' '.join(l.upper() for l in self.tile_rack)}"
+        self.schedule_timeline_speech(
+            rack_text,
+            delay_ticks=BOARD_READ_STEP_TICKS,
+            buffer="table",
+            player_ids=[setter.id],
+            tag="hwf-round-flow",
+        )
         self._broadcast_private_to_spectators(
-            f"Setter rack ({setter.name}): {' '.join(l.upper() for l in self.tile_rack)}"
+            f"Setter rack ({setter.name}): {' '.join(l.upper() for l in self.tile_rack)}",
+            delay_ticks=BOARD_READ_STEP_TICKS,
+            tag="hwf-round-flow",
         )
         self._broadcast_spectator_player_boards()
 
@@ -709,7 +717,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
         self.play_sound(SOUNDS["menu_open"])
         self.play_sound(SOUNDS["shuffle"], volume=85)
-        self.broadcast(
+        self._schedule_round_intro(
             f"Round {self.round}. Solo mode: {player.name} is guessing."
         )
         self.broadcast(self._format_board_modifiers_summary())
@@ -861,8 +869,12 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
         self.phase = "guessing"
         self.current_player = guesser
-        self.broadcast(
-            f"Word selected. The word has {len(word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}."
+        self.schedule_timeline_speech(
+            f"Word selected. The word has {len(word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}.",
+            delay_ticks=0,
+            buffer="table",
+            include_spectators=True,
+            tag="hwf-round-flow",
         )
         self.broadcast(self._format_board_modifiers_summary())
         self._broadcast_private_to_spectators(f"Secret word chosen by {setter.name}: {self.secret_word.upper()}")
@@ -1084,6 +1096,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.broadcast(f"{player.name} reached level {player.level}.")
 
     def _announce_guess_state(self) -> None:
+        self._schedule_board_readout()
         masked = self._spoken_board()
         guessed = ", ".join(l.upper() for l in sorted(self.guessed_letters)) or "none"
         self.broadcast(f"Board: {masked}. Guessed letters: {guessed}. Wrong {self.wrong_guesses}/{self.max_wrong_guesses}.")
@@ -1121,7 +1134,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             if contenders:
                 self._finish_with_winner(
                     contenders[0],
-                    f"All but one players ran out of balloons. {contenders[0].name} wins the match.",
+                    f"All but one player ran out of balloons. {contenders[0].name} wins the match.",
                 )
             else:
                 self._finish_with_winner(
@@ -1132,15 +1145,25 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
         return False
 
-    def _broadcast_private_to_spectators(self, text: str) -> None:
+    def _broadcast_private_to_spectators(
+        self, text: str, *, delay_ticks: int = 0, tag: str = ""
+    ) -> None:
         if not self.options.spectators_see_all_actions:
             return
+        if delay_ticks > 0:
+            self.schedule_timeline_speech(
+                text,
+                delay_ticks=delay_ticks,
+                buffer="table",
+                only_spectators=True,
+                tag=tag,
+            )
+            return
         for player in self.players:
-            if not player.is_spectator:
-                continue
-            user = self.get_user(player)
-            if user:
-                user.speak(text, "table")
+            if player.is_spectator:
+                user = self.get_user(player)
+                if user:
+                    user.speak(text, "table")
 
     def _broadcast_spectator_player_boards(self) -> None:
         if not self.options.spectators_see_all_actions:
@@ -1540,6 +1563,33 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 token = f"{token} {MODIFIER_LABELS[kind]}"
             parts.append(token)
         return ", ".join(parts)
+
+    def _spoken_board_tokens(self) -> list[str]:
+        return [token.strip() for token in self._spoken_board().split(",")]
+
+    def _schedule_board_readout(self) -> None:
+        self.cancel_timeline("hwf-board-readout")
+        tokens = self._spoken_board_tokens()
+        for idx, token in enumerate(tokens):
+            delay = idx * BOARD_READ_STEP_TICKS
+            self.schedule_timeline_speech(
+                token,
+                delay_ticks=delay,
+                buffer="table",
+                include_spectators=True,
+                tag="hwf-board-readout",
+            )
+            self.schedule_sound(SOUNDS["click2"], delay_ticks=delay, volume=35)
+
+    def _schedule_round_intro(self, text: str) -> None:
+        self.cancel_timeline("hwf-round-flow")
+        self.schedule_timeline_speech(
+            text,
+            delay_ticks=0,
+            buffer="table",
+            include_spectators=True,
+            tag="hwf-round-flow",
+        )
 
     def _load_dictionary(self) -> None:
         if self._dictionary_loaded:
