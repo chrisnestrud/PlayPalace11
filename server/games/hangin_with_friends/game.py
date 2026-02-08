@@ -488,6 +488,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     participant_ids: list[str] = field(default_factory=list)
     board_modifiers: dict[int, str] = field(default_factory=dict)
     round_resume_tick: int = 0
+    last_match_end_message: str = ""
+    last_eliminated_names: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
@@ -606,12 +608,95 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         )
         return action_set
 
+    def create_standard_action_set(self, player: Player) -> ActionSet:
+        action_set = super().create_standard_action_set(player)
+        local_actions = [
+            Action(
+                id="read_board",
+                label="Read board",
+                handler="_action_read_board",
+                is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_letters_available",
+                label="Letters available",
+                handler="_action_read_letters_available",
+                is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_letters_used",
+                label="Letters used",
+                handler="_action_read_letters_used",
+                is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_wheel_outcome",
+                label="Wheel outcome",
+                handler="_action_read_wheel_outcome",
+                is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_current_score",
+                label="Current score",
+                handler="_action_read_current_score",
+                is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_current_balloons",
+                label="Current balloons",
+                handler="_action_read_current_balloons",
+                is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_round_status",
+                label="Round status",
+                handler="_action_read_round_status",
+                is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_board_modifiers",
+                label="Board modifiers",
+                handler="_action_read_board_modifiers",
+                is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_rack",
+                label="Rack letters",
+                handler="_action_read_rack",
+                is_enabled="_is_read_rack_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+        ]
+        for action in reversed(local_actions):
+            action_set.add(action)
+            if action.id in action_set._order:
+                action_set._order.remove(action.id)
+            action_set._order.insert(0, action.id)
+        return action_set
+
     def setup_keybinds(self) -> None:
         super().setup_keybinds()
         self.define_keybind("c", "Choose word", ["choose_word"], state=KeybindState.ACTIVE)
         self.define_keybind("1", "Reveal lifeline", ["lifeline_reveal"], state=KeybindState.ACTIVE)
         self.define_keybind("2", "Remove strike lifeline", ["lifeline_remove"], state=KeybindState.ACTIVE)
         self.define_keybind("3", "Retry shield lifeline", ["lifeline_retry"], state=KeybindState.ACTIVE)
+        self.define_keybind("b", "Read board", ["read_board"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("a", "Letters available", ["read_letters_available"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("u", "Letters used", ["read_letters_used"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("w", "Wheel outcome", ["read_wheel_outcome"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("p", "Current score", ["read_current_score"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("l", "Current balloons", ["read_current_balloons"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("r", "Round status", ["read_round_status"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("m", "Board modifiers", ["read_board_modifiers"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("k", "Rack letters", ["read_rack"], state=KeybindState.ACTIVE, include_spectators=True)
 
     def on_start(self) -> None:
         self.status = "playing"
@@ -619,6 +704,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.round = 0
         self.phase = "lobby"
         self.round_resume_tick = 0
+        self.last_match_end_message = ""
+        self.last_eliminated_names = []
 
         active_players = self.get_active_players()
         self.participant_ids = [p.id for p in active_players]
@@ -698,6 +785,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
         self._clear_round_timeline()
         self.round += 1
+        self.last_eliminated_names = []
         players = self._get_round_eligible_players()
         if len(players) < 1:
             return
@@ -731,20 +819,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["shuffle"], volume=85)
         intro_text = f"Round {self.round}. {setter.name} is choosing a word, {guesser.name} will guess."
         self._schedule_round_intro(intro_text)
-        rack_delay = self._pacing_ticks("turn_transition") + self._pacing_ticks("post_board_pause")
-        rack_text = f"Your rack is: {' '.join(l.upper() for l in self.tile_rack)}"
-        self.schedule_timeline_speech(
-            rack_text,
-            delay_ticks=rack_delay,
-            buffer="table",
-            player_ids=[setter.id],
-            tag="hwf-round-flow",
-        )
-        self._broadcast_private_to_spectators(
-            f"Setter rack ({setter.name}): {' '.join(l.upper() for l in self.tile_rack)}",
-            delay_ticks=rack_delay,
-            tag="hwf-round-flow",
-        )
         self._broadcast_spectator_player_boards()
 
         BotHelper.jolt_bot_for_speech(
@@ -753,7 +827,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             speech_ticks=self.estimate_speech_ticks(intro_text),
             post_pause_ticks=self._pacing_ticks("post_board_pause"),
             min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
-            extra_ticks=self.estimate_speech_ticks(rack_text),
         )
 
         self.rebuild_all_menus()
@@ -790,7 +863,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self._schedule_round_intro(
             f"Round {self.round}. Solo mode: {player.name} is guessing."
         )
-        self.broadcast(self._format_board_modifiers_summary())
         self._spin_wheel(player)
         selected_text = (
             f"Word selected. The word has {len(self.secret_word)} letters. "
@@ -838,6 +910,27 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         if letter in self.guessed_letters:
             return "action-not-available"
         return None
+
+    def _is_read_status_enabled(self, player: Player) -> str | None:
+        if self.status != "playing":
+            return "action-not-playing"
+        if not self.secret_word:
+            return "action-not-available"
+        return None
+
+    def _is_read_status_hidden(self, player: Player) -> Visibility:
+        return Visibility.HIDDEN
+
+    def _is_read_rack_enabled(self, player: Player) -> str | None:
+        if self.status != "playing":
+            return "action-not-playing"
+        if not self.tile_rack:
+            return "action-not-available"
+        if player.id == self.setter_id:
+            return None
+        if player.is_spectator and self.options.spectators_see_all_actions:
+            return None
+        return "action-not-available"
 
     def _is_guess_letter_hidden(self, player: Player, action_id: str) -> Visibility:
         letter = action_id.rsplit("_", 1)[-1]
@@ -966,7 +1059,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             include_spectators=True,
             tag="hwf-round-flow",
         )
-        self.broadcast(self._format_board_modifiers_summary())
         self._broadcast_private_to_spectators(f"Secret word chosen by {setter.name}: {self.secret_word.upper()}")
         board_end_delay = self._announce_guess_state(
             delay_ticks=self._pacing_ticks("turn_transition")
@@ -986,6 +1078,118 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         letter = action_id.rsplit("_", 1)[-1]
         self._resolve_letter_guess(letter)
 
+    def _action_read_board(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        user.speak(self._format_board_summary())
+
+    def _action_read_letters_available(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        available = self._available_letters()
+        if available:
+            letters = ", ".join(letter.upper() for letter in available)
+            user.speak(f"Available letters: {letters}.")
+        else:
+            user.speak("Available letters: none.")
+
+    def _action_read_letters_used(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        used = sorted(set(self.guessed_letters))
+        if used:
+            letters = ", ".join(letter.upper() for letter in used)
+            user.speak(f"Used letters: {letters}.")
+        else:
+            user.speak("Used letters: none.")
+
+    def _action_read_wheel_outcome(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        user.speak(self._format_wheel_outcome())
+
+    def _action_read_current_score(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        if isinstance(player, HanginWithFriendsPlayer):
+            user.speak(f"{player.name} score {player.score}.")
+        else:
+            user.speak("No score available.")
+
+    def _action_read_current_balloons(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        if isinstance(player, HanginWithFriendsPlayer):
+            user.speak(f"{player.name} balloons {player.balloons_remaining}.")
+        else:
+            user.speak("No balloons available.")
+
+    def _action_read_round_status(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        user.speak(self._format_round_status())
+
+    def _action_read_board_modifiers(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        user.speak(self._format_board_modifiers_summary())
+
+    def _action_read_rack(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        if player.id != self.setter_id and not (player.is_spectator and self.options.spectators_see_all_actions):
+            user.speak("Rack not available.")
+            return
+        if not self.tile_rack:
+            user.speak("Rack not available.")
+            return
+        rack_text = " ".join(letter.upper() for letter in self.tile_rack)
+        user.speak(f"Rack letters: {rack_text}.")
+
+    def _format_score_line_brief(self, player: HanginWithFriendsPlayer) -> str:
+        return f"{player.name} score {player.score}, balloons {player.balloons_remaining}"
+
+    def _format_score_line_detailed(self, player: HanginWithFriendsPlayer) -> str:
+        return (
+            f"{player.name} score {player.score}, balloons {player.balloons_remaining}, "
+            f"coins {player.coins}, reveal {player.lifeline_reveal}, "
+            f"remove {player.lifeline_remove}, retry {player.lifeline_retry}."
+        )
+
+    def _action_check_scores(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        players = [p for p in self._get_participant_players() if not p.is_spectator]
+        if not players:
+            user.speak_l("no-scores-available")
+            return
+        lines = [self._format_score_line_brief(p) for p in sorted(players, key=lambda p: p.name.lower())]
+        text = ". ".join(lines)
+        if text and not text.endswith("."):
+            text += "."
+        user.speak(text)
+
+    def _action_check_scores_detailed(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        players = [p for p in self._get_participant_players() if not p.is_spectator]
+        if not players:
+            self.status_box(player, ["No scores available."])
+            return
+        lines = [self._format_score_line_detailed(p) for p in sorted(players, key=lambda p: p.name.lower())]
+        self.status_box(player, lines)
+
     def _action_lifeline_reveal(self, player: Player, action_id: str) -> None:
         if not isinstance(player, HanginWithFriendsPlayer) or player.lifeline_reveal <= 0:
             return
@@ -998,7 +1202,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         player.lifeline_reveal -= 1
         self.play_sound(SOUNDS["use_lifeline"])
         self.play_sound(SOUNDS["lifeline_slide"])
-        self.broadcast(f"{player.name} used reveal lifeline.")
         self._resolve_letter_guess(target_letter, from_lifeline=True)
 
     def _action_lifeline_remove(self, player: Player, action_id: str) -> None:
@@ -1007,21 +1210,12 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         if self.wrong_guesses <= 0:
             return
         player.lifeline_remove -= 1
+        mistakes_before = max(0, self.max_wrong_guesses - self.wrong_guesses)
         self.wrong_guesses = max(0, self.wrong_guesses - 1)
+        mistakes_after = max(0, self.max_wrong_guesses - self.wrong_guesses)
         self.play_sound(SOUNDS["use_lifeline"])
         self.play_sound(SOUNDS["lifeline_bounce"])
-        action_text = f"{player.name} removed one strike with a lifeline."
-        self.broadcast(action_text)
-        board_end_delay = self._announce_guess_state(
-            delay_ticks=self._pacing_ticks("guess_result_pause")
-        )
-        BotHelper.jolt_bot_for_speech(
-            player,
-            delay_ticks=board_end_delay,
-            speech_ticks=self.estimate_speech_ticks(action_text),
-            post_pause_ticks=self._pacing_ticks("post_board_pause"),
-            min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
-        )
+        self._maybe_broadcast_mistakes_left_change(mistakes_before, mistakes_after)
         self.rebuild_all_menus()
 
     def _action_lifeline_retry(self, player: Player, action_id: str) -> None:
@@ -1033,15 +1227,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         player.retry_shield_active = True
         self.play_sound(SOUNDS["use_lifeline"])
         self.play_sound(SOUNDS["lifeline_bounce"])
-        action_text = f"{player.name} activated retry shield lifeline."
-        self.broadcast(action_text)
-        BotHelper.jolt_bot_for_speech(
-            player,
-            delay_ticks=0,
-            speech_ticks=self.estimate_speech_ticks(action_text),
-            post_pause_ticks=self._pacing_ticks("post_board_pause"),
-            min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
-        )
         self.rebuild_all_menus()
 
     def _action_set_bot_difficulty(self, player: Player, value: str, action_id: str) -> None:
@@ -1070,42 +1255,37 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         outcome = rng.choice(WHEEL_OUTCOMES)
         self.wheel_result = outcome
         self.play_sound(SOUNDS["drop"])
+        mistakes_before = max(0, self.max_wrong_guesses - self.wrong_guesses)
 
         if outcome == "coin_bonus":
             guesser.coins += 10
             self.play_sound(SOUNDS["buy_points"])
             self.play_sound(SOUNDS["pickup"])
-            self.broadcast(f"Wheel: coin bonus. {guesser.name} gains 10 coins.")
         elif outcome == "extra_guess":
             self.max_wrong_guesses += 1
             self.play_sound(SOUNDS["pickup"])
-            self.broadcast("Wheel: extra guess this round.")
         elif outcome == "fewer_guess":
-            self.max_wrong_guesses = max(1, self.max_wrong_guesses - 1)
+            self.max_wrong_guesses = max(1, self.max_wrong_guesses - 1, self.wrong_guesses)
             self.play_sound(SOUNDS["drop"])
-            self.broadcast("Wheel: one fewer guess this round.")
         elif outcome == "double_points":
             self.round_points_multiplier = 2
             self.play_sound(SOUNDS["multiplier"])
-            self.broadcast("Wheel: double points this round.")
         elif outcome == "lifeline_reveal":
             guesser.lifeline_reveal += 1
             self.play_sound(SOUNDS["pickup"])
             self.play_sound(SOUNDS["lifeline_slide"])
-            self.broadcast(f"Wheel: {guesser.name} gains a reveal lifeline.")
         elif outcome == "lifeline_remove":
             guesser.lifeline_remove += 1
             self.play_sound(SOUNDS["pickup"])
             self.play_sound(SOUNDS["lifeline_bounce"])
-            self.broadcast(f"Wheel: {guesser.name} gains a remove-strike lifeline.")
         elif outcome == "lifeline_retry":
             guesser.lifeline_retry += 1
             self.play_sound(SOUNDS["pickup"])
             self.play_sound(SOUNDS["lifeline_bounce"])
-            self.broadcast(f"Wheel: {guesser.name} gains a retry-shield lifeline.")
         else:
             self.play_sound(SOUNDS["click2"])
-            self.broadcast("Wheel: no bonus this round.")
+        mistakes_after = max(0, self.max_wrong_guesses - self.wrong_guesses)
+        self._maybe_broadcast_mistakes_left_change(mistakes_before, mistakes_after)
 
     def _resolve_letter_guess(self, letter: str, from_lifeline: bool = False) -> None:
         guesser = self.get_player_by_id(self.guesser_id)
@@ -1135,18 +1315,18 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 return
         else:
             self._apply_wrong_guess(guesser)
-            guess_text = (
-                f"Wrong. {letter.upper()} is not in the word. "
-                f"{self.max_wrong_guesses - self.wrong_guesses} mistakes left."
-            )
+            guess_text = f"Wrong. {letter.upper()} is not in the word."
             self.broadcast(guess_text)
             if self.wrong_guesses >= self.max_wrong_guesses:
                 self._resolve_round(guesser_solved=False)
                 return
 
-        board_end_delay = self._announce_guess_state(
-            delay_ticks=self._pacing_ticks("guess_result_pause")
-        )
+        if letter in self.secret_word and not from_lifeline:
+            board_end_delay = self._announce_guess_state(
+                delay_ticks=self._pacing_ticks("guess_result_pause")
+            )
+        else:
+            board_end_delay = self._pacing_ticks("guess_result_pause")
         BotHelper.jolt_bot_for_speech(
             guesser,
             delay_ticks=board_end_delay,
@@ -1186,28 +1366,21 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             self._award_score(guesser, points)
             self.play_sound(CORRECT_SEQUENCE_SOUNDS[7])
             self.play_sound(SOUNDS["balloon"])
-            result_text = f"{guesser.name} solved '{self.secret_word}'. {setter.name} loses a balloon."
+            result_text = f"{guesser.name} solved the word."
             self.broadcast(result_text)
         else:
             guesser.balloons_remaining -= 1
             self._award_score(setter, points)
             self.play_sound(INCORRECT_SEQUENCE_SOUNDS[7])
             self.play_sound(SOUNDS["balloon"])
-            result_text = f"{guesser.name} failed to solve '{self.secret_word}'. {guesser.name} loses a balloon."
+            result_text = f"{guesser.name} did not solve the word."
             self.broadcast(result_text)
 
-        scoring_text = (
-            "Round scoring: "
-            f"{self._format_board_modifiers_summary()} "
-            f"Word points {word_points}, wheel multiplier x{self.round_points_multiplier}, total {points}."
-        )
-        self.broadcast(scoring_text)
-        eliminated_texts = self._eliminate_players_without_balloons()
-        balloons_text = self._announce_balloons()
+        eliminated_texts = self._eliminate_players_without_balloons(speak=False)
 
         if self._check_match_end():
             return
-        round_end_texts = [result_text, scoring_text, balloons_text, *eliminated_texts]
+        round_end_texts = [result_text, *eliminated_texts]
         text_pause_ticks = sum(
             self.estimate_speech_ticks(msg) + self._pacing_ticks("post_board_pause")
             for msg in round_end_texts
@@ -1233,17 +1406,68 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["level_up"])
         self.play_sound(SOUNDS["level_up_missions"])
         self.play_sound(SOUNDS["popup"])
-        self.broadcast(f"{player.name} reached level {player.level}.")
+        # Level ups are discoverable via hotkeys/status.
+
+    def _available_letters(self) -> list[str]:
+        guessed = set(self.guessed_letters)
+        return [letter for letter in string.ascii_lowercase if letter not in guessed]
+
+    def _format_board_summary(self) -> str:
+        masked = self._spoken_board()
+        return f"Board: {masked}."
+
+    def _format_wheel_outcome(self) -> str:
+        if not self.wheel_result:
+            return "Wheel outcome not set."
+        mapping = {
+            "coin_bonus": "Wheel outcome: coin bonus.",
+            "extra_guess": "Wheel outcome: extra guess.",
+            "fewer_guess": "Wheel outcome: one fewer guess.",
+            "double_points": "Wheel outcome: double points.",
+            "lifeline_reveal": "Wheel outcome: reveal lifeline.",
+            "lifeline_remove": "Wheel outcome: remove-strike lifeline.",
+            "lifeline_retry": "Wheel outcome: retry-shield lifeline.",
+            "none": "Wheel outcome: no bonus.",
+        }
+        return mapping.get(self.wheel_result, f"Wheel outcome: {self.wheel_result}.")
+
+    def _format_round_status(self) -> str:
+        setter = self.get_player_by_id(self.setter_id)
+        guesser = self.get_player_by_id(self.guesser_id)
+        parts = [f"Round {self.round}", f"phase {self.phase}"]
+        if self.current_player:
+            parts.append(f"current player {self.current_player.name}")
+        if setter:
+            parts.append(f"setter {setter.name}")
+        if guesser:
+            parts.append(f"guesser {guesser.name}")
+        if self.secret_word:
+            parts.append(f"word length {len(self.secret_word)}")
+        if self.max_wrong_guesses > 0:
+            mistakes_left = max(0, self.max_wrong_guesses - self.wrong_guesses)
+            parts.append(f"mistakes left {mistakes_left}")
+        if self.phase in {"round_end", "game_end"} and self.secret_word:
+            points = self._score_word_with_board_modifiers(self.secret_word)
+            total = points * self.round_points_multiplier
+            parts.append(f"round points {points} x{self.round_points_multiplier} total {total}")
+        if self.last_eliminated_names:
+            eliminated = ", ".join(self.last_eliminated_names)
+            parts.append(f"eliminated {eliminated}")
+        if self.phase == "game_end" and getattr(self, "last_match_end_message", ""):
+            parts.append(self.last_match_end_message)
+        return ". ".join(parts) + "."
+
+    def _maybe_broadcast_mistakes_left_change(self, before: int, after: int) -> None:
+        if before == after:
+            return
+        if after < before and before - after == 1:
+            return
+        self.broadcast(f"Mistakes left: {after}.")
 
     def _announce_guess_state(self, *, delay_ticks: int = 0) -> int:
         total_board_ticks = self._schedule_board_readout(delay_ticks=delay_ticks)
         summary_delay = total_board_ticks + self._pacing_ticks("post_board_pause")
-        masked = self._spoken_board()
-        guessed = ", ".join(l.upper() for l in sorted(self.guessed_letters)) or "none"
-        summary_text = (
-            f"Board: {masked}. Guessed letters: {guessed}. "
-            f"Wrong {self.wrong_guesses}/{self.max_wrong_guesses}."
-        )
+        summary_text = self._format_board_summary()
         self.schedule_timeline_speech(
             summary_text,
             delay_ticks=summary_delay,
@@ -1351,21 +1575,24 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             if not p.is_spectator and p.balloons_remaining > 0
         ]
 
-    def _eliminate_players_without_balloons(self) -> list[str]:
+    def _eliminate_players_without_balloons(self, *, speak: bool = True) -> list[str]:
         eliminated_messages: list[str] = []
         for p in self._get_participant_players():
             if p.balloons_remaining > 0 or p.is_spectator:
                 continue
             p.is_spectator = True
+            self.last_eliminated_names.append(p.name)
             message = f"{p.name} is eliminated and now spectating."
-            self.broadcast(message)
+            if speak:
+                self.broadcast(message)
             eliminated_messages.append(message)
         return eliminated_messages
 
     def _finish_with_winner(self, winner: HanginWithFriendsPlayer, message: str) -> None:
         self._clear_round_timeline()
         self.phase = "game_end"
-        self.broadcast(message)
+        self.last_match_end_message = message
+        self.broadcast("Match over.")
         for p in self.get_active_players():
             user = self.get_user(p)
             if not user:

@@ -146,6 +146,24 @@ class TestHanginWithFriendsActions:
         assert self.game.masked_word[0] == "p"
         assert "p" in self.game.guessed_letters
 
+    def test_board_readout_only_on_correct_guess(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.user2.clear_messages()
+
+        self.game.execute_action(self.p2, "guess_letter_c")
+        for _ in range(200):
+            self.game.on_tick()
+        spoken = self.user2.get_spoken_messages()
+        assert any(msg.startswith("Board:") for msg in spoken)
+
+        self.user2.clear_messages()
+        self.game.execute_action(self.p2, "guess_letter_z")
+        for _ in range(200):
+            self.game.on_tick()
+        spoken = self.user2.get_spoken_messages()
+        assert not any(msg.startswith("Board:") for msg in spoken)
+
     def test_solved_word_makes_setter_lose_balloon(self):
         self._force_round(self.p1, self.p2, "cat")
         self.game.execute_action(self.p1, "choose_word", "cat")
@@ -157,7 +175,8 @@ class TestHanginWithFriendsActions:
 
         assert self.p1.balloons_remaining == before - 1
         spoken = self.user1.get_spoken_messages() + self.user2.get_spoken_messages()
-        assert any(msg.startswith("Round scoring:") for msg in spoken)
+        assert any(msg.startswith("Bob solved the word.") for msg in spoken)
+        assert not any(msg.startswith("Round scoring:") for msg in spoken)
 
     def test_failed_round_makes_guesser_lose_balloon(self):
         self._force_round(self.p1, self.p2, "cat")
@@ -212,6 +231,169 @@ class TestHanginWithFriendsActions:
         self.game.execute_action(self.p2, "guess_letter_z")
         assert self.p2.balloons_remaining == 0
         assert self.p2.is_spectator is True
+
+    def test_read_hotkeys_round_status_and_wheel(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.wheel_result = "coin_bonus"
+        self.user2.clear_messages()
+
+        self.game.execute_action(self.p2, "read_round_status")
+        self.game.execute_action(self.p2, "read_wheel_outcome")
+        spoken = self.user2.get_spoken_messages()
+        assert any(msg.startswith("Round") and "current player" in msg for msg in spoken)
+        assert any(msg.startswith("Wheel outcome: coin bonus.") for msg in spoken)
+
+    def test_read_hotkeys_board_modifiers_and_rack_access(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.user1.clear_messages()
+        self.user2.clear_messages()
+
+        self.game.execute_action(self.p1, "read_board_modifiers")
+        spoken = self.user1.get_spoken_messages()
+        assert any(msg.startswith("Board modifiers:") for msg in spoken)
+
+        self.game.execute_action(self.p1, "read_rack")
+        spoken = self.user1.get_spoken_messages()
+        assert any(msg.startswith("Rack letters:") for msg in spoken)
+
+        self.user2.clear_messages()
+        self.game.execute_action(self.p2, "read_rack")
+        spoken = self.user2.get_spoken_messages()
+        assert spoken == []
+
+    def test_read_hotkeys_letters_used_and_available(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.user2.clear_messages()
+
+        self.game.execute_action(self.p2, "read_letters_used")
+        self.game.execute_action(self.p2, "read_letters_available")
+        spoken = self.user2.get_spoken_messages()
+        assert any("Used letters: A" in msg for msg in spoken)
+        assert any(msg.startswith("Available letters:") for msg in spoken)
+
+        self.user2.clear_messages()
+        self.game.execute_action(self.p2, "guess_letter_c")
+        self.game.execute_action(self.p2, "read_letters_used")
+        spoken = self.user2.get_spoken_messages()
+        assert any("Used letters:" in msg and "C" in msg for msg in spoken)
+
+    def test_read_hotkeys_current_score_and_balloons(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.p2.score = 12
+        self.p2.balloons_remaining = 4
+        self.user2.clear_messages()
+
+        self.game.execute_action(self.p2, "read_current_score")
+        self.game.execute_action(self.p2, "read_current_balloons")
+        spoken = self.user2.get_spoken_messages()
+        assert any(msg.startswith("Bob score 12.") for msg in spoken)
+        assert any(msg.startswith("Bob balloons 4.") for msg in spoken)
+
+    def test_check_scores_brief_and_detailed(self):
+        self.p1.score = 14
+        self.p1.balloons_remaining = 5
+        self.p1.coins = 28
+        self.p1.lifeline_reveal = 0
+        self.p1.lifeline_remove = 1
+        self.p1.lifeline_retry = 0
+
+        self.user1.clear_messages()
+        self.game.execute_action(self.p1, "check_scores")
+        spoken = self.user1.get_spoken_messages()
+        assert any("Alice score 14, balloons 5" in msg for msg in spoken)
+        assert not any("coins" in msg for msg in spoken)
+
+        self.game.execute_action(self.p1, "check_scores_detailed")
+        status_items = self.user1.get_current_menu_items("status_box")
+        assert status_items is not None
+        lines = [item.text for item in status_items]
+        assert any(
+            "Alice score 14, balloons 5, coins 28, reveal 0, remove 1, retry 0." in line
+            for line in lines
+        )
+
+    def test_board_readout_on_round_start(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.user2.clear_messages()
+        for _ in range(200):
+            self.game.on_tick()
+        spoken = self.user2.get_spoken_messages()
+        assert any(msg.startswith("Board:") for msg in spoken)
+
+    def test_lifeline_reveal_does_not_read_board(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.p2.lifeline_reveal = 1
+        for _ in range(200):
+            self.game.on_tick()
+        self.user2.clear_messages()
+
+        self.game.execute_action(self.p2, "lifeline_reveal")
+        for _ in range(200):
+            self.game.on_tick()
+        spoken = self.user2.get_spoken_messages()
+        assert not any(msg.startswith("Board:") for msg in spoken)
+
+    def test_mistakes_left_only_speaks_on_large_change(self, monkeypatch):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.wrong_guesses = 1
+        self.game.max_wrong_guesses = 3
+        self.p2.lifeline_remove = 1
+        self.user2.clear_messages()
+
+        self.game.execute_action(self.p2, "lifeline_remove")
+        spoken = self.user2.get_spoken_messages()
+        assert any(msg.startswith("Mistakes left: 3") for msg in spoken)
+
+        self.user2.clear_messages()
+
+        class FixedRandom:
+            def __init__(self, value):
+                self._value = value
+
+            def choice(self, _seq):
+                return self._value
+
+        monkeypatch.setattr(
+            "server.games.hangin_with_friends.game.random.Random",
+            lambda *_a, **_k: FixedRandom("fewer_guess"),
+        )
+        self.game._spin_wheel(self.p2)
+        spoken = self.user2.get_spoken_messages()
+        assert not any(msg.startswith("Mistakes left:") for msg in spoken)
+
+    def test_fewer_guess_clamped_to_wrong_guesses(self, monkeypatch):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.wrong_guesses = 3
+        self.game.max_wrong_guesses = 4
+
+        class FixedRandom:
+            def choice(self, _seq):
+                return "fewer_guess"
+
+        monkeypatch.setattr(
+            "server.games.hangin_with_friends.game.random.Random",
+            lambda *_a, **_k: FixedRandom(),
+        )
+        self.game._spin_wheel(self.p2)
+        assert self.game.max_wrong_guesses >= self.game.wrong_guesses
+
+    def test_read_round_status_includes_match_end(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.options.max_score = 1
+        self.p2.score = 1
+        self.game._check_match_end()
+
+        status = self.game._format_round_status()
+        assert "Score limit" in status or "wins the match" in status
 
     def test_game_result_includes_eliminated_participants(self):
         self.p2.balloons_remaining = 0
@@ -271,7 +453,7 @@ class TestHanginSpectatorVisibility:
         assert any(msg.startswith("Secret word chosen by Alice: PLANET") for msg in spoken)
         assert any(msg.startswith("Alice board:") for msg in spoken)
         assert any(msg.startswith("Bob board:") for msg in spoken)
-        assert any(msg.startswith("Board modifiers:") for msg in spoken)
+        assert not any(msg.startswith("Board modifiers:") for msg in spoken)
 
     def test_spectator_private_state_hidden_when_disabled(self):
         game, p1, p2, spectator = self._setup_game(False)
@@ -283,7 +465,7 @@ class TestHanginSpectatorVisibility:
         assert not any(msg.startswith("Secret word chosen by Alice: PLANET") for msg in spoken)
         assert not any(msg.startswith("Alice board:") for msg in spoken)
         assert not any(msg.startswith("Bob board:") for msg in spoken)
-        assert any(msg.startswith("Board modifiers:") for msg in spoken)
+        assert not any(msg.startswith("Board modifiers:") for msg in spoken)
 
 
 class TestHanginTimelineSync:
