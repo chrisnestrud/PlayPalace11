@@ -321,6 +321,7 @@ class ConfigSharingDialog(wx.Dialog, uisound.SoundBindingsMixin):
                 is_new = existing_id is None
                 accounts = imp_server.get("accounts", {})
                 info_differs = False
+                account_count = len(accounts)
 
                 if not is_new:
                     existing_server = existing_servers[existing_id]
@@ -328,12 +329,16 @@ class ConfigSharingDialog(wx.Dialog, uisound.SoundBindingsMixin):
                     if not has_meaningful_changes(imp_server, existing_server):
                         continue
                     info_differs = server_info_differs(imp_server, existing_server)
+                    new_accts, changed_accts = find_changed_accounts(
+                        accounts, existing_server.get("accounts", {}),
+                    )
+                    account_count = len(new_accts) + len(changed_accts)
 
                 self._server_data.append({
                     "index": i,
                     "server_dict": imp_server,
                     "name": imp_server.get("name", "Unknown"),
-                    "account_count": len(accounts),
+                    "account_count": account_count,
                     "has_options": has_options_profile_data(imp_server),
                     "is_new": is_new,
                     "info_differs": info_differs,
@@ -399,6 +404,8 @@ class ConfigSharingDialog(wx.Dialog, uisound.SoundBindingsMixin):
         for i in range(len(self._type_items)):
             self._types_list.Check(i, True)
         self._types_list.Bind(wx.EVT_CHECKLISTBOX, self._on_type_toggled)
+        if self._types_list.GetCount() > 0:
+            self._types_list.SetSelection(0)
         filter_sizer.Add(self._types_list, 0, wx.EXPAND | wx.ALL, 5)
 
         main_sizer.Add(filter_sizer, 0, wx.EXPAND | wx.ALL, 5)
@@ -566,76 +573,94 @@ class ConfigSharingDialog(wx.Dialog, uisound.SoundBindingsMixin):
             return None
         return self._visible_indices[sel]
 
+    def _show_panel_message(self, text):
+        """Show a message in the server panel, hiding all other controls."""
+        self._not_included_label.SetValue(text)
+        self._not_included_label.SetName(text)
+        self._not_included_label.Show(True)
+        self._accounts_cb.Show(False)
+        self._options_cb.Show(False)
+        if self.mode == self.MODE_IMPORT:
+            self._info_text.Show(False)
+            self._update_info_cb.Show(False)
+        self._server_panel.Layout()
+
     def _refresh_server_panel(self):
         """Refresh the server panel for the currently focused server."""
+        # Hide panel entirely when no servers are visible
+        if not self._visible_indices:
+            self._server_panel.Show(False)
+            self._server_panel.GetParent().Layout()
+            return
+
+        self._server_panel.Show(True)
         idx = self._get_focused_data_index()
 
         if idx is None:
-            self._not_included_label.Show(True)
-            self._accounts_cb.Show(False)
-            self._options_cb.Show(False)
-            if self.mode == self.MODE_IMPORT:
-                self._info_text.Show(False)
-                self._update_info_cb.Show(False)
-            self._server_panel.Layout()
+            self._show_panel_message("Server not included")
             return
 
         sdata = self._server_data[idx]
         state = self._per_server_state[idx]
         is_checked = state.get("server_checked", False)
 
-        # Determine which types are visible (from included types checklistbox)
-        show_accounts = self.TYPE_ACCOUNTS in self._get_visible_types()
-        show_options = self.TYPE_OPTIONS in self._get_visible_types()
-        show_info = self.TYPE_SERVER_INFO in self._get_visible_types()
-
         if not is_checked:
-            self._not_included_label.Show(True)
+            self._show_panel_message("Server not included")
+            return
+
+        # Determine which types are visible (from included types checklistbox)
+        visible_types = self._get_visible_types()
+        show_accounts = self.TYPE_ACCOUNTS in visible_types
+        show_options = self.TYPE_OPTIONS in visible_types
+        show_info = self.TYPE_SERVER_INFO in visible_types
+
+        # Check if any control would actually be visible for this server
+        any_visible = show_accounts or show_options or (
+            self.mode == self.MODE_IMPORT and show_info and sdata.get("info_differs", False)
+        )
+        if not any_visible:
+            self._show_panel_message("No included types for this server")
+            return
+
+        self._not_included_label.Show(False)
+
+        # Accounts checkbox
+        if show_accounts:
+            count = sdata["account_count"]
+            acct_label = f"Add &user accounts, {count} account{'s' if count != 1 else ''}"
+            self._accounts_cb.SetLabel(acct_label)
+            self._accounts_cb.SetValue(state["accounts"])
+            self._accounts_cb.Enable(count > 0)
+            self._accounts_cb.Show(True)
+        else:
             self._accounts_cb.Show(False)
+
+        # Options checkbox
+        if show_options:
+            if sdata["has_options"]:
+                self._options_cb.SetLabel("Add options &profile")
+                self._options_cb.Enable(True)
+            else:
+                self._options_cb.SetLabel("Add options &profile (will use defaults)")
+                self._options_cb.Enable(False)
+            self._options_cb.SetValue(state["options"])
+            self._options_cb.Show(True)
+        else:
             self._options_cb.Show(False)
-            if self.mode == self.MODE_IMPORT:
+
+        # Import-only: server info
+        if self.mode == self.MODE_IMPORT:
+            if show_info and sdata.get("info_differs", False):
+                existing_servers = self.config_manager.get_all_servers()
+                existing_server = existing_servers.get(sdata["existing_id"], {})
+                display_text = build_server_info_display(sdata["server_dict"], existing_server)
+                self._info_text.SetValue(display_text)
+                self._info_text.Show(True)
+                self._update_info_cb.SetValue(state.get("update_info", False))
+                self._update_info_cb.Show(True)
+            else:
                 self._info_text.Show(False)
                 self._update_info_cb.Show(False)
-        else:
-            self._not_included_label.Show(False)
-
-            # Accounts checkbox
-            if show_accounts:
-                count = sdata["account_count"]
-                acct_label = f"Add &user accounts, {count} account{'s' if count != 1 else ''}"
-                self._accounts_cb.SetLabel(acct_label)
-                self._accounts_cb.SetValue(state["accounts"])
-                self._accounts_cb.Enable(count > 0)
-                self._accounts_cb.Show(True)
-            else:
-                self._accounts_cb.Show(False)
-
-            # Options checkbox
-            if show_options:
-                if sdata["has_options"]:
-                    self._options_cb.SetLabel("Add options &profile")
-                    self._options_cb.Enable(True)
-                else:
-                    self._options_cb.SetLabel("Add options &profile (will use defaults)")
-                    self._options_cb.Enable(False)
-                self._options_cb.SetValue(state["options"])
-                self._options_cb.Show(True)
-            else:
-                self._options_cb.Show(False)
-
-            # Import-only: server info
-            if self.mode == self.MODE_IMPORT:
-                if show_info and sdata.get("info_differs", False):
-                    existing_servers = self.config_manager.get_all_servers()
-                    existing_server = existing_servers.get(sdata["existing_id"], {})
-                    display_text = build_server_info_display(sdata["server_dict"], existing_server)
-                    self._info_text.SetValue(display_text)
-                    self._info_text.Show(True)
-                    self._update_info_cb.SetValue(state.get("update_info", False))
-                    self._update_info_cb.Show(True)
-                else:
-                    self._info_text.Show(False)
-                    self._update_info_cb.Show(False)
 
         self._server_panel.Layout()
 
