@@ -6,19 +6,27 @@ import { createMenuView } from "./ui/menus.js";
 import { createChat } from "./ui/chat.js";
 import { installKeybinds } from "./keybinds.js";
 import { createNetworkClient, loadPacketValidator } from "./network.js";
+import { WEB_CLIENT_CONFIG } from "./config.js";
 
 const REMEMBERED_USERNAME_KEY = "playpalace.web.remembered_username";
 
 function getDefaultServerUrl() {
+  if (WEB_CLIENT_CONFIG.serverUrl) {
+    return WEB_CLIENT_CONFIG.serverUrl;
+  }
+
   const host = window.location.hostname;
   const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1";
   if (isLocalHost) {
-    return "ws://127.0.0.1:8000";
+    const localPort = WEB_CLIENT_CONFIG.serverPort || 8000;
+    return `ws://127.0.0.1:${localPort}`;
   }
 
   const isHttps = window.location.protocol === "https:";
   const wsScheme = isHttps ? "wss" : "ws";
-  const port = window.location.port;
+  const port = WEB_CLIENT_CONFIG.serverPort
+    ? String(WEB_CLIENT_CONFIG.serverPort)
+    : window.location.port;
   const isDefaultPort = (!isHttps && port === "80") || (isHttps && port === "443");
   const portSuffix = port && !isDefaultPort ? `:${port}` : "";
   return `${wsScheme}://${host}${portSuffix}`;
