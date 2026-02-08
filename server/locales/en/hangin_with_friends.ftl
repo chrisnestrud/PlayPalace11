@@ -36,6 +36,18 @@ hwf-set-max-score = Max score: { $score }
 hwf-enter-max-score = Enter max score (0 for no limit):
 hwf-option-changed-max-score = Max score changed to { $score }.
 
+hwf-set-min-modifiers = Min board modifiers: { $count }
+hwf-enter-min-modifiers = Enter minimum modifiers per word:
+hwf-option-changed-min-modifiers = Minimum modifiers changed to { $count }.
+
+hwf-set-max-modifiers = Max board modifiers: { $count }
+hwf-enter-max-modifiers = Enter maximum modifiers per word:
+hwf-option-changed-max-modifiers = Maximum modifiers changed to { $count }.
+
+hwf-set-modifier-density = Modifier density: { $percent }%
+hwf-enter-modifier-density = Enter modifier density percent:
+hwf-option-changed-modifier-density = Modifier density changed to { $percent }%.
+
 hwf-set-default-bot-difficulty = Default bot difficulty: { $mode }
 hwf-select-default-bot-difficulty = Select default bot difficulty:
 hwf-option-changed-default-bot-difficulty = Default bot difficulty changed to { $mode }.
@@ -54,6 +66,30 @@ hwf-option-changed-bot-guess-aggression = Bot guess aggression changed to { $mod
 hwf-set-pacing-profile = Pacing profile: { $mode }
 hwf-select-pacing-profile = Select pacing profile:
 hwf-option-changed-pacing-profile = Pacing profile changed to { $mode }.
+
+# Pairing and timers
+hwf-set-round-timer = Round timer: { $seconds } seconds
+hwf-enter-round-timer = Enter round timer seconds (0 to disable):
+hwf-option-changed-round-timer = Round timer set to { $seconds } seconds.
+
+hwf-set-timer-warning = Timer warning at: { $seconds } seconds
+hwf-enter-timer-warning = Enter timer warning seconds (0 to disable):
+hwf-option-changed-timer-warning = Timer warning set to { $seconds } seconds.
+
+hwf-set-winner-cap = Winner streak cap: { $count } rounds
+hwf-enter-winner-cap = Enter winner streak cap (rounds):
+hwf-option-changed-winner-cap = Winner streak cap changed to { $count } rounds.
+
+hwf-set-pairing-strategy = Pairing strategy: { $mode }
+hwf-select-pairing-strategy = Select pairing strategy:
+hwf-option-changed-pairing-strategy = Pairing strategy set to { $mode }.
+
+hwf-pairing-winner-fair = Winner stays (fair)
+hwf-pairing-round-robin = Round robin (rotate)
+hwf-pairing-weighted-fair = Weighted fair (random)
+hwf-pairing-winner-cap = Winner stays (streak cap)
+hwf-pairing-host-queue = Host first (queue)
+hwf-pairing-performance = Performance balance
 
 # Choices
 hwf-bot-difficulty-easy = Easy
@@ -83,19 +119,4 @@ hwf-select-bot-difficulty = Select bot and difficulty:
 # Errors
 hwf-error-min-length-greater-than-max = Minimum word length cannot be greater than maximum word length.
 hwf-error-rack-smaller-than-max-length = Rack size cannot be smaller than maximum word length.
-
-# Pairing and timers
-hwf-set-round-timer = Round timer: { $seconds } seconds
-hwf-enter-round-timer = Enter round timer seconds (0 to disable):
-hwf-option-changed-round-timer = Round timer set to { $seconds } seconds.
-
-hwf-set-pairing-strategy = Pairing strategy: { $mode }
-hwf-select-pairing-strategy = Select pairing strategy:
-hwf-option-changed-pairing-strategy = Pairing strategy set to { $mode }.
-
-hwf-pairing-winner-fair = Winner stays (fair)
-hwf-pairing-round-robin = Round robin (rotate)
-hwf-pairing-weighted-fair = Weighted fair (random)
-hwf-pairing-winner-cap = Winner stays (cap)
-hwf-pairing-host-queue = Host first (queue)
-hwf-pairing-performance = Performance balance
+hwf-error-min-modifiers-greater-than-max = Minimum modifiers cannot be greater than maximum modifiers.

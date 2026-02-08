@@ -405,6 +405,94 @@ class TestHanginWithFriendsActions:
         status = self.game._format_round_status()
         assert "Score limit" in status or "wins the match" in status
 
+    def test_round_timer_timeout_picks_rack_letter(self, monkeypatch):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.options.round_timer_seconds = 1
+        self.game._start_turn_timer()
+        before = list(self.game.guessed_letters)
+
+        monkeypatch.setattr("server.games.hangin_with_friends.game.random.choice", lambda seq: seq[0])
+        self.game.timer.start(1)
+        while not self.game.timer.tick():
+            pass
+        self.game._handle_turn_timeout()
+        assert self.game.guessed_letters != before
+
+    def test_round_timer_disabled_does_not_timeout(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.options.round_timer_seconds = 0
+        self.game._start_turn_timer()
+        assert self.game.timer.seconds_remaining() == 0
+
+    def test_board_modifier_compact_formatting(self):
+        self.game.board_modifiers = {1: "double_letter", 3: "triple_word", 6: "triple_word"}
+        compact = self.game._format_board_modifiers_compact()
+        assert "double letter on 1" in compact
+        assert "triple word on 3 and 6" in compact
+
+    def test_modifier_knobs_min_max_and_density(self, monkeypatch):
+        self.game.options.min_modifiers = 2
+        self.game.options.max_modifiers = 2
+        self.game.options.modifier_density_percent = 0
+        monkeypatch.setattr("server.games.hangin_with_friends.game.random.sample", lambda seq, k: list(seq)[:k])
+        monkeypatch.setattr("server.games.hangin_with_friends.game.random.uniform", lambda _a, _b: 0.0)
+        word = "planet"
+        mods = self.game._roll_board_modifiers(word)
+        assert len(mods) == 2
+
+        self.game.options.min_modifiers = 0
+        self.game.options.max_modifiers = 4
+        self.game.options.modifier_density_percent = 0
+        mods = self.game._roll_board_modifiers(word)
+        assert len(mods) == 0
+
+    def test_round_timer_warning_uses_custom_threshold(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.options.round_timer_seconds = 10
+        self.game.options.timer_warning_seconds = 3
+        self.game._start_turn_timer()
+        while self.game.timer.seconds_remaining() > 3:
+            self.game.timer.tick()
+        self.game._maybe_play_timer_warning()
+        sounds = self.user1.get_sounds_played()
+        assert any("sfx_click2.ogg" in s for s in sounds)
+
+    def test_round_timer_warning_disabled(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.options.round_timer_seconds = 10
+        self.game.options.timer_warning_seconds = 0
+        self.game._start_turn_timer()
+        while self.game.timer.seconds_remaining() > 1:
+            self.game.timer.tick()
+        self.game._maybe_play_timer_warning()
+        sounds = self.user1.get_sounds_played()
+        assert not any("sfx_click2.ogg" in s for s in sounds)
+
+    def test_round_timer_resets_on_guess(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.options.round_timer_seconds = 10
+        self.game._start_turn_timer()
+        self.game.timer.tick()
+        remaining_before = self.game.timer.seconds_remaining()
+        self.game.execute_action(self.p2, "guess_letter_c")
+        remaining_after = self.game.timer.seconds_remaining()
+        assert remaining_after >= remaining_before
+
+    def test_winner_cap_option_controls_rotation(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.options.pairing_strategy = "winner_cap"
+        self.game.options.winner_cap_rounds = 1
+        self.game.last_round_winner_id = self.p1.id
+        self.game.winner_streak_id = self.p1.id
+        self.game.winner_streak_count = 1
+        setter, guesser = self.game._select_round_pair([self.p1, self.p2])
+        assert setter.id != guesser.id
+
     def test_game_result_includes_eliminated_participants(self):
         self.p2.balloons_remaining = 0
         self.p2.is_spectator = True
@@ -811,6 +899,10 @@ class TestHanginCoverageEdges:
         errors = self.game.prestart_validate()
         assert "hwf-error-min-length-greater-than-max" in errors
         assert "hwf-error-rack-smaller-than-max-length" in errors
+        self.game.options.min_modifiers = 3
+        self.game.options.max_modifiers = 2
+        errors = self.game.prestart_validate()
+        assert "hwf-error-min-modifiers-greater-than-max" in errors
 
     def test_lava_scheduler_and_tick(self):
         self.game.sound_scheduler_tick = 10
@@ -1318,6 +1410,94 @@ class TestHanginCoverageEdges:
                 return 0
 
         assert game._best_pick_letter_entropy(TruthyZeroLen()) is None
+
+    def test_pairing_strategies_defaults_and_host_first(self):
+        game = HanginWithFriendsGame()
+        u1 = MockUser("Host")
+        u2 = MockUser("Bob")
+        u3 = MockUser("Cara")
+        p1 = game.add_player("Host", u1)
+        p2 = game.add_player("Bob", u2)
+        p3 = game.add_player("Cara", u3)
+        game.host = "Host"
+        game.on_start()
+        game.options.pairing_strategy = "round_robin"
+        setter, guesser = game._select_round_pair([p1, p2, p3])
+        assert setter.id in {p1.id, p2.id, p3.id}
+        assert guesser.id in {p1.id, p2.id, p3.id}
+
+        game.round = 1
+        game.options.pairing_strategy = "winner_fair"
+        setter, guesser = game._select_round_pair([p1, p2, p3])
+        assert setter.id == p1.id
+        assert guesser.id in {p2.id, p3.id}
+
+    def test_pairing_strategy_winner_cap_forces_rotation(self):
+        game = HanginWithFriendsGame()
+        p1 = game.add_player("A", MockUser("A"))
+        p2 = game.add_player("B", MockUser("B"))
+        game.options.pairing_strategy = "winner_cap"
+        game.round = 2
+        game.last_round_winner_id = p1.id
+        game.winner_streak_id = p1.id
+        game.winner_streak_count = 2
+        setter, guesser = game._select_round_pair([p1, p2])
+        assert setter.id != guesser.id
+
+    def test_pairing_strategy_performance_pairs_extremes(self):
+        game = HanginWithFriendsGame()
+        p1 = game.add_player("Low", MockUser("Low"))
+        p2 = game.add_player("High", MockUser("High"))
+        p1.score = 1
+        p1.balloons_remaining = 1
+        p2.score = 10
+        p2.balloons_remaining = 5
+        game.options.pairing_strategy = "performance"
+        setter, guesser = game._select_round_pair([p1, p2])
+        assert setter.id == p2.id
+        assert guesser.id == p1.id
+
+    def test_pairing_strategy_round_robin_rotates(self):
+        game = HanginWithFriendsGame()
+        p1 = game.add_player("A", MockUser("A"))
+        p2 = game.add_player("B", MockUser("B"))
+        p3 = game.add_player("C", MockUser("C"))
+        game.options.pairing_strategy = "round_robin"
+        game.round = 2
+        setter1, guesser1 = game._select_round_pair([p1, p2, p3])
+        setter2, guesser2 = game._select_round_pair([p1, p2, p3])
+        assert setter1.id != setter2.id or guesser1.id != guesser2.id
+
+    def test_pairing_strategy_weighted_fair_prefers_least_recent(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        p1 = game.add_player("A", MockUser("A"))
+        p2 = game.add_player("B", MockUser("B"))
+        p3 = game.add_player("C", MockUser("C"))
+        game.options.pairing_strategy = "weighted_fair"
+        game.round = 5
+        game.last_played_round = {p1.id: 4, p2.id: 1, p3.id: 4}
+
+        def fake_uniform(_a, total):
+            return total - 0.1
+
+        monkeypatch.setattr("server.games.hangin_with_friends.game.random.uniform", fake_uniform)
+        setter, guesser = game._select_round_pair([p1, p2, p3])
+        assert setter.id == p2.id or guesser.id == p2.id
+
+    def test_pairing_strategy_host_queue_orders(self):
+        game = HanginWithFriendsGame()
+        p1 = game.add_player("Host", MockUser("Host"))
+        p2 = game.add_player("B", MockUser("B"))
+        p3 = game.add_player("C", MockUser("C"))
+        game.host = "Host"
+        game.options.pairing_strategy = "host_queue"
+        game.round = 1
+        setter1, _ = game._select_round_pair([p1, p2, p3])
+        assert setter1.id == p1.id
+        game.host_queue_index = (game.host_queue_index + 1) % 3
+        game.round = 2
+        setter2, _ = game._select_round_pair([p1, p2, p3])
+        assert setter2.id in {p2.id, p3.id}
 
     def test_debug_best_pick_snapshot(self):
         game = HanginWithFriendsGame()

@@ -427,6 +427,39 @@ class HanginWithFriendsOptions(GameOptions):
             change_msg="hwf-option-changed-max-score",
         )
     )
+    min_modifiers: int = option_field(
+        IntOption(
+            default=0,
+            min_val=0,
+            max_val=6,
+            value_key="count",
+            label="hwf-set-min-modifiers",
+            prompt="hwf-enter-min-modifiers",
+            change_msg="hwf-option-changed-min-modifiers",
+        )
+    )
+    max_modifiers: int = option_field(
+        IntOption(
+            default=4,
+            min_val=0,
+            max_val=10,
+            value_key="count",
+            label="hwf-set-max-modifiers",
+            prompt="hwf-enter-max-modifiers",
+            change_msg="hwf-option-changed-max-modifiers",
+        )
+    )
+    modifier_density_percent: int = option_field(
+        IntOption(
+            default=100,
+            min_val=0,
+            max_val=300,
+            value_key="percent",
+            label="hwf-set-modifier-density",
+            prompt="hwf-enter-modifier-density",
+            change_msg="hwf-option-changed-modifier-density",
+        )
+    )
     round_timer_seconds: int = option_field(
         IntOption(
             default=0,
@@ -436,6 +469,28 @@ class HanginWithFriendsOptions(GameOptions):
             label="hwf-set-round-timer",
             prompt="hwf-enter-round-timer",
             change_msg="hwf-option-changed-round-timer",
+        )
+    )
+    timer_warning_seconds: int = option_field(
+        IntOption(
+            default=5,
+            min_val=0,
+            max_val=30,
+            value_key="seconds",
+            label="hwf-set-timer-warning",
+            prompt="hwf-enter-timer-warning",
+            change_msg="hwf-option-changed-timer-warning",
+        )
+    )
+    winner_cap_rounds: int = option_field(
+        IntOption(
+            default=2,
+            min_val=1,
+            max_val=10,
+            value_key="count",
+            label="hwf-set-winner-cap",
+            prompt="hwf-enter-winner-cap",
+            change_msg="hwf-option-changed-winner-cap",
         )
     )
     pairing_strategy: str = option_field(
@@ -846,6 +901,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             errors.append("hwf-error-min-length-greater-than-max")
         if self.options.rack_size < self.options.max_word_length:
             errors.append("hwf-error-rack-smaller-than-max-length")
+        if self.options.min_modifiers > self.options.max_modifiers:
+            errors.append("hwf-error-min-modifiers-greater-than-max")
         return errors
 
     def _schedule_next_lava_ambience(self, initial: bool = False) -> None:
@@ -1716,7 +1773,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     def _pair_winner_cap(
         self, eligible: list[HanginWithFriendsPlayer]
     ) -> tuple[HanginWithFriendsPlayer, HanginWithFriendsPlayer]:
-        cap = 2
+        cap = max(1, self.options.winner_cap_rounds)
         if self.winner_streak_id and self.winner_streak_count >= cap:
             setter = self._pick_least_recent(eligible, exclude_id="")
             guesser = self._pick_least_recent(eligible, exclude_id=setter.id)
@@ -1824,7 +1881,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     def _announce_guess_state(self, *, delay_ticks: int = 0) -> int:
         total_board_ticks = self._schedule_board_readout(delay_ticks=delay_ticks)
         summary_delay = total_board_ticks + self._pacing_ticks("post_board_pause")
-        summary_text = self._format_board_summary()
+        guessed = ", ".join(l.upper() for l in sorted(self.guessed_letters)) or "none"
+        summary_text = f"Guessed letters: {guessed}. Wrong {self.wrong_guesses}/{self.max_wrong_guesses}."
         self.schedule_timeline_speech(
             summary_text,
             delay_ticks=summary_delay,
@@ -1832,7 +1890,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             include_spectators=True,
             tag="hwf-board-readout",
         )
-        # Spectator boards are available via hotkeys instead of auto speech.
         return summary_delay + self.estimate_speech_ticks(summary_text)
 
     def _announce_balloons(self) -> str:
@@ -1971,11 +2028,12 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
     def _maybe_play_timer_warning(self) -> None:
         seconds = self.options.round_timer_seconds
-        if seconds < 20 or seconds <= 0:
+        warning = self.options.timer_warning_seconds
+        if seconds <= 0 or warning <= 0:
             return
         if self.timer_warning_played:
             return
-        if self.timer.seconds_remaining() == 5:
+        if self.timer.seconds_remaining() == warning:
             self.timer_warning_played = True
             self.play_sound(SOUNDS["click2"], volume=40)
 
@@ -2260,14 +2318,49 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         return self._modifier_chances_by_length[nearest]
 
     def _roll_board_modifiers(self, word: str) -> dict[int, str]:
-        chances = self._modifier_chances_for_length(len(word))
+        length = len(word)
+        chances = self._modifier_chances_for_length(length)
+        if length <= 0:
+            return {}
+
+        expected_per_pos = sum(chances.get(kind, 0.0) for kind in MODIFIER_ORDER) / 100.0
+        density = max(0.0, self.options.modifier_density_percent) / 100.0
+        expected_total = length * expected_per_pos * density
+        base = int(expected_total)
+        extra = 1 if random.random() < (expected_total - base) else 0
+        target = base + extra
+
+        min_mods = max(0, self.options.min_modifiers)
+        max_mods = max(0, self.options.max_modifiers)
+        if max_mods < min_mods:
+            max_mods = min_mods
+        max_mods = min(max_mods, length)
+        min_mods = min(min_mods, max_mods, length)
+
+        if target > max_mods:
+            target = max_mods
+        if target < min_mods:
+            target = min_mods
+        if target <= 0:
+            return {}
+
+        positions = random.sample(range(1, length + 1), k=target)
+        weights = [max(0.0, chances.get(kind, 0.0)) for kind in MODIFIER_ORDER]
+        total_weight = sum(weights)
+        if total_weight <= 0:
+            return {}
+
         modifiers: dict[int, str] = {}
-        for idx in range(1, len(word) + 1):
-            for kind in MODIFIER_ORDER:
-                chance = chances.get(kind, 0.0)
-                if random.random() * 100.0 < chance:
-                    modifiers[idx] = kind
+        for pos in positions:
+            roll = random.uniform(0.0, total_weight)
+            upto = 0.0
+            chosen = MODIFIER_ORDER[0]
+            for kind, weight in zip(MODIFIER_ORDER, weights):
+                upto += weight
+                if roll <= upto:
+                    chosen = kind
                     break
+            modifiers[pos] = chosen
         return modifiers
 
     def _initialize_board(self, word: str) -> None:
