@@ -8,6 +8,10 @@ import { installKeybinds } from "./keybinds.js";
 import { createNetworkClient, loadPacketValidator } from "./network.js";
 
 const REMEMBERED_USERNAME_KEY = "playpalace.web.remembered_username";
+const MUSIC_VOLUME_KEY = "playpalace.web.music_volume";
+const AMBIENCE_VOLUME_KEY = "playpalace.web.ambience_volume";
+const DEFAULT_MUSIC_VOLUME = 20;
+const DEFAULT_AMBIENCE_VOLUME = 100;
 const DEFAULT_WEB_CLIENT_CONFIG = {
   serverUrl: "",
   serverPort: null,
@@ -46,6 +50,34 @@ function getDefaultServerUrl() {
   const isDefaultPort = (!isHttps && port === "80") || (isHttps && port === "443");
   const portSuffix = port && !isDefaultPort ? `:${port}` : "";
   return `${wsScheme}://${host}${portSuffix}`;
+}
+
+function normalizeUsername(username) {
+  return String(username || "").trim().toLowerCase();
+}
+
+function clampPercent(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+function loadStoredPercent(key, fallback) {
+  try {
+    return clampPercent(localStorage.getItem(key), fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+function saveStoredPercent(key, value) {
+  try {
+    localStorage.setItem(key, String(clampPercent(value, 0)));
+  } catch {
+    // Ignore persistence failures.
+  }
 }
 
 const elements = {
@@ -91,6 +123,8 @@ const a11y = createA11y({
 const audio = createAudioEngine({
   soundBaseUrl: WEB_CLIENT_CONFIG.soundBaseUrl || "./sounds",
 });
+audio.setMusicVolumePercent(loadStoredPercent(MUSIC_VOLUME_KEY, DEFAULT_MUSIC_VOLUME));
+audio.setAmbienceVolumePercent(loadStoredPercent(AMBIENCE_VOLUME_KEY, DEFAULT_AMBIENCE_VOLUME));
 
 const historyView = createHistoryView({
   store,
@@ -102,7 +136,11 @@ const historyView = createHistoryView({
 const menuView = createMenuView({
   store,
   listEl: elements.menuList,
-  onSelectionSound: () => {
+  onSelectionSound: (item) => {
+    if (item?.sound) {
+      audio.playSound({ name: item.sound, volume: 100 });
+      return;
+    }
     audio.playSound({ name: "menuclick.ogg", volume: 50 });
   },
   onBoundaryRepeat: (text) => {
@@ -139,14 +177,14 @@ function loadRememberedUsername() {
     if (!raw) {
       return "";
     }
-    return String(raw).trim();
+    return normalizeUsername(raw);
   } catch {
     return "";
   }
 }
 
 function saveRememberedUsername(username) {
-  const safeUsername = (username || "").trim();
+  const safeUsername = normalizeUsername(username);
   if (!safeUsername) {
     return;
   }
@@ -201,6 +239,33 @@ function sendEscape() {
 
 function sendKeybind(payload) {
   network.send({ type: "keybind", ...payload });
+}
+
+function sendListOnline() {
+  network.send({ type: "list_online" });
+}
+
+function sendListOnlineWithGames() {
+  if (store.state.currentMenu.menuId === "online_users") {
+    return;
+  }
+  network.send({ type: "list_online_with_games" });
+}
+
+function adjustAmbienceVolume(deltaPercent) {
+  const current = audio.getAmbienceVolumePercent();
+  const next = clampPercent(current + deltaPercent, current);
+  audio.setAmbienceVolumePercent(next);
+  saveStoredPercent(AMBIENCE_VOLUME_KEY, next);
+  a11y.announce(`Ambience: ${next}%`, { assertive: true });
+}
+
+function adjustMusicVolume(deltaPercent) {
+  const current = audio.getMusicVolumePercent();
+  const next = clampPercent(current + deltaPercent, current);
+  audio.setMusicVolumePercent(next);
+  saveStoredPercent(MUSIC_VOLUME_KEY, next);
+  a11y.announce(`Music: ${next}%`, { assertive: true });
 }
 
 function closeInlineInput({ returnFocus = true } = {}) {
@@ -415,6 +480,14 @@ function handlePacket(packet) {
       audio.stopMusic();
       break;
     }
+    case "play_ambience": {
+      audio.playAmbience(packet);
+      break;
+    }
+    case "stop_ambience": {
+      audio.stopAmbience();
+      break;
+    }
     case "request_input": {
       showInlineInput(packet);
       break;
@@ -518,13 +591,31 @@ async function bootstrap() {
     sendMenuSelection,
     sendEscape,
     sendKeybind,
+    sendListOnline,
+    sendListOnlineWithGames,
+    onPreviousBuffer: () => historyView.previousBuffer(),
+    onNextBuffer: () => historyView.nextBuffer(),
+    onFirstBuffer: () => historyView.firstBuffer(),
+    onLastBuffer: () => historyView.lastBuffer(),
+    onOlderMessage: () => historyView.olderMessage(),
+    onNewerMessage: () => historyView.newerMessage(),
+    onOldestMessage: () => historyView.oldestMessage(),
+    onNewestMessage: () => historyView.newestMessage(),
+    onToggleBufferMute: () => historyView.toggleCurrentBufferMute(),
+    onAmbienceDown: () => adjustAmbienceVolume(-10),
+    onAmbienceUp: () => adjustAmbienceVolume(10),
+    onMusicDown: () => adjustMusicVolume(-10),
+    onMusicUp: () => adjustMusicVolume(10),
     isModalOpen: () => elements.loginDialog.open || elements.inputDialog.open,
   });
 
   elements.connectForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (store.state.connection.status === "connecting") {
+      return;
+    }
     const serverUrl = getDefaultServerUrl();
-    const username = elements.username.value.trim();
+    const username = normalizeUsername(elements.username.value);
     const password = elements.password.value;
 
     if (!username) {
@@ -532,6 +623,7 @@ async function bootstrap() {
       return;
     }
 
+    elements.username.value = username;
     elements.loginDialog.returnValue = "connect";
     store.setConnection({ serverUrl, username, status: "connecting", authenticated: false });
     network.connect({ serverUrl, username, password });

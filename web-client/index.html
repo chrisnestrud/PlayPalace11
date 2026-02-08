@@ -21,6 +21,9 @@
         color: var(--text);
         background: radial-gradient(circle at top left, #ffffff, var(--bg));
       }
+      h1, h2 {
+        margin: 0;
+      }
       main {
         max-width: 1100px;
         margin: 0 auto;
@@ -113,6 +116,8 @@
   </head>
   <body>
     <main>
+      <h1>PlayPalace V11 Web</h1>
+
       <section class="panel" aria-label="Connection status">
         <div class="row">
           <button id="open-login-btn" type="button" class="secondary" tabindex="-1">Login/Reconnect</button>
@@ -123,9 +128,7 @@
 
       <section id="game-shell" class="grid" hidden>
         <section class="panel" aria-label="Menu">
-          <div class="row">
-            <strong>Menu</strong>
-          </div>
+          <h2>Game</h2>
           <ul id="menu-list" class="menu-list" tabindex="0" role="listbox"></ul>
           <section id="inline-input" class="panel" hidden style="margin-top: 8px;">
             <p id="inline-input-prompt" style="margin: 0 0 6px 0;"></p>
@@ -138,8 +141,10 @@
         </section>
 
         <section class="panel" aria-label="History and chat">
+          <h2>History</h2>
           <textarea id="history" class="history" readonly tabindex="0" aria-label="History"></textarea>
 
+          <h2 style="margin-top: 10px;">Chat</h2>
           <form id="chat-form" class="row" style="margin-top: 10px;">
             <label>
               Chat

@@ -43,6 +43,9 @@ export function createAudioEngine(options = {}) {
   let currentMusic = null;
   let currentMusicName = "";
   let currentMusicLooping = true;
+  let currentAmbience = null;
+  let currentAmbienceLoop = null;
+  let currentAmbienceLoopName = "";
   const activeEffects = new Set();
 
   if (context) {
@@ -69,7 +72,7 @@ export function createAudioEngine(options = {}) {
     return context.state === "running";
   }
 
-function connectElement(audio, gainNode, panValue = 0, url = "") {
+  function connectElement(audio, gainNode, panValue = 0, url = "") {
     if (!context || !gainNode) {
       return false;
     }
@@ -184,8 +187,126 @@ function connectElement(audio, gainNode, panValue = 0, url = "") {
     currentMusicLooping = true;
   }
 
+  function stopAmbience() {
+    if (currentAmbience) {
+      try {
+        currentAmbience.pause();
+        currentAmbience.currentTime = 0;
+      } catch {
+        // Ignore stop failures.
+      }
+      currentAmbience = null;
+    }
+    if (currentAmbienceLoop) {
+      try {
+        currentAmbienceLoop.pause();
+        currentAmbienceLoop.currentTime = 0;
+      } catch {
+        // Ignore stop failures.
+      }
+      currentAmbienceLoop = null;
+    }
+    currentAmbienceLoopName = "";
+  }
+
+  function playAmbience(packet) {
+    const loopName = packet.loop || "";
+    const introName = packet.intro || "";
+    if (!loopName) {
+      return;
+    }
+    if (currentAmbienceLoop && currentAmbienceLoopName === loopName) {
+      if (currentAmbienceLoop.paused) {
+        void currentAmbienceLoop.play().catch(() => {});
+      }
+      return;
+    }
+
+    stopAmbience();
+
+    const loopAudio = createAudioElement(toSoundUrl(loopName, soundBaseUrl));
+    loopAudio.preload = "auto";
+    loopAudio.loop = true;
+    loopAudio.volume = 1.0;
+    const loopUrl = toSoundUrl(loopName, soundBaseUrl);
+    const loopAttached = connectElement(loopAudio, ambienceGain, 0, loopUrl);
+    if (!loopAttached && ambienceGain) {
+      loopAudio.volume *= ambienceGain.gain.value;
+    }
+
+    const startLoop = () => {
+      currentAmbienceLoop = loopAudio;
+      currentAmbienceLoopName = loopName;
+      void loopAudio.play().catch(() => {});
+    };
+
+    if (introName) {
+      const introAudio = createAudioElement(toSoundUrl(introName, soundBaseUrl));
+      introAudio.preload = "auto";
+      introAudio.loop = false;
+      introAudio.volume = 1.0;
+      const introUrl = toSoundUrl(introName, soundBaseUrl);
+      const introAttached = connectElement(introAudio, ambienceGain, 0, introUrl);
+      if (!introAttached && ambienceGain) {
+        introAudio.volume *= ambienceGain.gain.value;
+      }
+      introAudio.addEventListener("ended", startLoop, { once: true });
+      currentAmbience = introAudio;
+      void introAudio.play().catch(startLoop);
+      return;
+    }
+
+    startLoop();
+  }
+
+  function setMusicVolumePercent(percent) {
+    const bounded = Math.max(0, Math.min(100, Number(percent)));
+    if (musicGain) {
+      musicGain.gain.value = bounded / 100;
+    } else if (currentMusic) {
+      currentMusic.volume = bounded / 100;
+    }
+    return bounded;
+  }
+
+  function setAmbienceVolumePercent(percent) {
+    const bounded = Math.max(0, Math.min(100, Number(percent)));
+    if (ambienceGain) {
+      ambienceGain.gain.value = bounded / 100;
+    } else {
+      if (currentAmbience) {
+        currentAmbience.volume = bounded / 100;
+      }
+      if (currentAmbienceLoop) {
+        currentAmbienceLoop.volume = bounded / 100;
+      }
+    }
+    return bounded;
+  }
+
+  function getMusicVolumePercent() {
+    if (musicGain) {
+      return Math.round(musicGain.gain.value * 100);
+    }
+    if (currentMusic) {
+      return Math.round(currentMusic.volume * 100);
+    }
+    return 20;
+  }
+
+  function getAmbienceVolumePercent() {
+    if (ambienceGain) {
+      return Math.round(ambienceGain.gain.value * 100);
+    }
+    if (currentAmbienceLoop) {
+      return Math.round(currentAmbienceLoop.volume * 100);
+    }
+    return 100;
+  }
+
   function stopAll() {
     stopMusic();
+    stopAmbience();
     for (const audio of activeEffects) {
       try {
         audio.pause();
@@ -201,7 +322,13 @@ function connectElement(audio, gainNode, panValue = 0, url = "") {
     unlock,
     playSound,
     playMusic,
+    playAmbience,
     stopMusic,
+    stopAmbience,
     stopAll,
+    setMusicVolumePercent,
+    setAmbienceVolumePercent,
+    getMusicVolumePercent,
+    getAmbienceVolumePercent,
   };
 }

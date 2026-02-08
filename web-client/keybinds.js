@@ -33,35 +33,128 @@ function isTypingTarget(element) {
   return tag === "INPUT" || tag === "TEXTAREA" || element.isContentEditable;
 }
 
-export function installKeybinds({ store, menuView, sendMenuSelection, sendEscape, sendKeybind, isModalOpen }) {
+function isEditableTarget(element) {
+  if (!isTypingTarget(element)) {
+    return false;
+  }
+  if (element.disabled) {
+    return false;
+  }
+  if (element.readOnly) {
+    return false;
+  }
+  return true;
+}
+
+export function installKeybinds({
+  store,
+  menuView,
+  sendMenuSelection,
+  sendEscape,
+  sendKeybind,
+  sendListOnline,
+  sendListOnlineWithGames,
+  onPreviousBuffer,
+  onNextBuffer,
+  onFirstBuffer,
+  onLastBuffer,
+  onOlderMessage,
+  onNewerMessage,
+  onOldestMessage,
+  onNewestMessage,
+  onToggleBufferMute,
+  onAmbienceDown,
+  onAmbienceUp,
+  onMusicDown,
+  onMusicUp,
+  isModalOpen,
+}) {
   document.addEventListener("keydown", (event) => {
     if (isModalOpen && isModalOpen()) {
       return;
     }
 
     const menu = store.state.currentMenu;
-    const typing = isTypingTarget(document.activeElement);
-    const menuFocused = document.activeElement === menuView.getElement();
     const activeElement = document.activeElement;
+    const typing = isTypingTarget(activeElement);
+    const editing = isEditableTarget(activeElement);
+    const menuFocused = activeElement === menuView.getElement();
+    const connected = store.state.connection.authenticated;
+
+    if (event.key === "Backspace" && !editing) {
+      // Avoid browser navigation/context behavior outside editable controls.
+      event.preventDefault();
+      if (!menuFocused) {
+        return;
+      }
+    }
+
+    if (connected && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.key === "F2") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          sendListOnlineWithGames?.();
+        } else {
+          sendListOnline?.();
+        }
+        return;
+      }
+      if (menuFocused && event.key === "F4" && !event.shiftKey) {
+        event.preventDefault();
+        onToggleBufferMute?.();
+        return;
+      }
+      if (event.key === "F7") {
+        event.preventDefault();
+        onAmbienceDown?.();
+        return;
+      }
+      if (event.key === "F8") {
+        event.preventDefault();
+        onAmbienceUp?.();
+        return;
+      }
+      if (event.key === "F9") {
+        event.preventDefault();
+        onMusicDown?.();
+        return;
+      }
+      if (event.key === "F10") {
+        event.preventDefault();
+        onMusicUp?.();
+        return;
+      }
+    }
 
     if (
-      event.key === "Backspace"
-      && activeElement
-      && (activeElement.tagName === "TEXTAREA" || activeElement.tagName === "INPUT")
-      && activeElement.readOnly
+      connected
+      && (event.key === "w" || event.key === "W")
+      && event.ctrlKey
+      && !event.altKey
+      && !event.metaKey
     ) {
-      // Avoid browser back navigation when focus is on readonly history.
       event.preventDefault();
+      const menuIndex = menu.items.length ? menu.selection + 1 : null;
+      const currentItem = menu.items[menu.selection] || null;
+      sendKeybind({
+        key: "w",
+        control: true,
+        alt: false,
+        shift: event.shiftKey,
+        menu_id: menu.menuId,
+        menu_index: menuIndex,
+        menu_item_id: currentItem?.id ?? null,
+      });
       return;
     }
 
     if (menuFocused) {
-      if (event.key === "ArrowUp") {
+      if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
         event.preventDefault();
         menuView.moveSelection(-1);
         return;
       }
-      if (event.key === "ArrowDown") {
+      if (event.key === "ArrowDown" || event.key === "ArrowRight") {
         event.preventDefault();
         menuView.moveSelection(1);
         return;
@@ -96,13 +189,52 @@ export function installKeybinds({ store, menuView, sendMenuSelection, sendEscape
         menuView.handleTypeNavigation(typedChar);
         return;
       }
+
+      if (!event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (event.key === "[") {
+          event.preventDefault();
+          if (event.shiftKey) {
+            onFirstBuffer?.();
+          } else {
+            onPreviousBuffer?.();
+          }
+          return;
+        }
+        if (event.key === "]") {
+          event.preventDefault();
+          if (event.shiftKey) {
+            onLastBuffer?.();
+          } else {
+            onNextBuffer?.();
+          }
+          return;
+        }
+        if (event.key === ",") {
+          event.preventDefault();
+          if (event.shiftKey) {
+            onOldestMessage?.();
+          } else {
+            onOlderMessage?.();
+          }
+          return;
+        }
+        if (event.key === ".") {
+          event.preventDefault();
+          if (event.shiftKey) {
+            onNewestMessage?.();
+          } else {
+            onNewerMessage?.();
+          }
+          return;
+        }
+      }
     }
 
     if (!menuFocused && !typing) {
       return;
     }
 
-    if (event.key === "Escape" || (event.key === "Backspace" && menuFocused)) {
+    if (event.key === "Escape" || (event.key === "Backspace" && menuFocused && !editing)) {
       if (event.key === "Backspace" && menu.menuId === "main_menu") {
         event.preventDefault();
         return;
@@ -135,7 +267,7 @@ export function installKeybinds({ store, menuView, sendMenuSelection, sendEscape
       return;
     }
 
-    if ((typing || !menuFocused) && event.key !== "Escape") {
+    if ((editing || !menuFocused) && event.key !== "Escape") {
       return;
     }
 
@@ -161,6 +293,11 @@ export function installKeybinds({ store, menuView, sendMenuSelection, sendEscape
       "f3",
       "f4",
       "f5",
+      "f6",
+      "f7",
+      "f8",
+      "f9",
+      "f10",
     ].includes(key);
 
     const shouldSend = isFunctionLike || !menu.multiletterEnabled || event.altKey || event.ctrlKey || event.shiftKey;

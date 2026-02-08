@@ -27,7 +27,7 @@ export function createMenuView({
     }
     store.setMenu({ selection: bounded });
     if (onSelectionSound) {
-      onSelectionSound();
+      onSelectionSound(store.state.currentMenu.items[bounded], bounded);
     }
   }
 
@@ -41,7 +41,7 @@ export function createMenuView({
     const bounded = Math.max(0, Math.min(count - 1, current + delta));
     if (bounded === current) {
       if (onSelectionSound) {
-        onSelectionSound();
+        onSelectionSound(menu.items[current], current);
       }
       const currentItem = menu.items[current];
       if (currentItem && onBoundaryRepeat) {
