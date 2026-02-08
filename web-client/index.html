@@ -172,6 +172,7 @@
       <dialog id="login-dialog">
         <form id="connect-form" method="dialog">
           <p><strong>Connect to PlayPalace</strong></p>
+          <p id="login-error" class="status error" hidden></p>
           <div style="display: grid; gap: 8px;">
             <label>
               Username
@@ -188,6 +189,9 @@
           </div>
           <div class="row" style="justify-content: flex-end; margin-top: 10px;">
             <button id="connect-btn" type="submit">Connect</button>
+          </div>
+          <div class="row" style="justify-content: flex-end; margin-top: 8px;">
+            <small id="login-version" class="status">Version</small>
           </div>
         </form>
       </dialog>

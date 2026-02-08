@@ -94,6 +94,8 @@ const elements = {
   openLoginBtn: document.getElementById("open-login-btn"),
   disconnectBtn: document.getElementById("disconnect-btn"),
   status: document.getElementById("status"),
+  loginError: document.getElementById("login-error"),
+  loginVersion: document.getElementById("login-version"),
 
   menuList: document.getElementById("menu-list"),
   inlineInput: document.getElementById("inline-input"),
@@ -175,6 +177,30 @@ function renderVersion() {
     return;
   }
   elements.appVersion.textContent = `Web client version ${APP_VERSION}`;
+  if (elements.loginVersion) {
+    elements.loginVersion.textContent = `Web client version ${APP_VERSION}`;
+  }
+}
+
+function clearLoginError() {
+  if (!elements.loginError) {
+    return;
+  }
+  elements.loginError.hidden = true;
+  elements.loginError.textContent = "";
+}
+
+function setLoginError(text, { announce = true } = {}) {
+  if (!text) {
+    return;
+  }
+  if (elements.loginError) {
+    elements.loginError.textContent = text;
+    elements.loginError.hidden = false;
+  }
+  if (announce) {
+    a11y.announce(text, { assertive: true });
+  }
 }
 
 function setConnectedUi(connected) {
@@ -418,6 +444,7 @@ function handlePacket(packet) {
   switch (packet.type) {
     case "authorize_success": {
       store.setConnection({ authenticated: true, status: "authenticated", lastError: "" });
+      clearLoginError();
       if (elements.rememberMe.checked) {
         saveRememberedUsername(packet.username || elements.username.value);
       } else {
@@ -491,6 +518,9 @@ function handlePacket(packet) {
       const text = packet.text || "";
       if (!text) {
         return;
+      }
+      if (!store.state.connection.authenticated && elements.loginDialog.open) {
+        setLoginError(text, { announce: !packet.muted });
       }
       historyView.addEntry(text, {
         buffer: packet.buffer || "misc",
@@ -597,6 +627,7 @@ async function bootstrap() {
         openLoginDialog();
       } else if (status === "error") {
         setStatus("Connection error", true);
+        setLoginError("Connection error.", { announce: true });
         audio.stopAll();
         closeInlineInput({ returnFocus: false });
         setConnectedUi(false);
@@ -607,6 +638,9 @@ async function bootstrap() {
     onError: (message) => {
       historyView.addEntry(message, { buffer: "activity", announce: true, assertive: true });
       setStatus(message, true);
+      if (!store.state.connection.authenticated && elements.loginDialog.open) {
+        setLoginError(message, { announce: false });
+      }
     },
   });
 
@@ -652,6 +686,7 @@ async function bootstrap() {
     if (store.state.connection.status === "connecting") {
       return;
     }
+    clearLoginError();
     const serverUrl = getDefaultServerUrl();
     const username = normalizeUsername(elements.username.value);
     const password = elements.password.value;
