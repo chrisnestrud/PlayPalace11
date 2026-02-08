@@ -219,11 +219,10 @@ class TossUpGame(PushYourLuckBotMixin, ActionGuardMixin, Game):
     def _action_roll(self, player: Player, action_id: str) -> None:
         """Handle roll action."""
         tossup_player: TossUpPlayer = player  # type: ignore
+        user = self.get_user(player)
+        locale = user.locale if user else "en"
 
         self.play_sound("game_pig/roll.ogg")
-
-        # Jolt the rolling player to pause before next action
-        BotHelper.jolt_bot(player, ticks=random.randint(10, 20))
 
         # Roll the dice
         green = 0
@@ -271,6 +270,7 @@ class TossUpGame(PushYourLuckBotMixin, ActionGuardMixin, Game):
             "tossup-player-rolls",
             results=result_text,
         )
+        roll_msg = Localization.get(locale, "tossup-you-roll", results=result_text)
 
         # Check for bust based on rules variant
         is_bust = False
@@ -310,6 +310,13 @@ class TossUpGame(PushYourLuckBotMixin, ActionGuardMixin, Game):
             turn_points=tossup_player.turn_points,
             dice_count=tossup_player.dice_count,
         )
+        status_msg = Localization.get(
+            locale,
+            "tossup-you-have-points",
+            turn_points=tossup_player.turn_points,
+            dice_count=tossup_player.dice_count,
+        )
+        speech_ticks = self.estimate_speech_ticks(roll_msg) + self.estimate_speech_ticks(status_msg)
 
         # Check if no dice left (refresh dice)
         if tossup_player.dice_count == 0:
@@ -321,6 +328,20 @@ class TossUpGame(PushYourLuckBotMixin, ActionGuardMixin, Game):
                 "tossup-player-gets-fresh",
                 count=tossup_player.dice_count,
             )
+            fresh_msg = Localization.get(
+                locale,
+                "tossup-you-get-fresh",
+                count=tossup_player.dice_count,
+            )
+            speech_ticks += self.estimate_speech_ticks(fresh_msg)
+
+        BotHelper.jolt_bot_for_speech(
+            player,
+            speech_ticks=speech_ticks,
+            post_pause_ticks=4,
+            min_ticks=6,
+            max_ticks=24,
+        )
 
         # Menus will be rebuilt automatically after action execution
 

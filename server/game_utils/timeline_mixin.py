@@ -1,5 +1,7 @@
 """Mixin for synchronized, paced table announcement timelines."""
 
+import math
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -41,6 +43,13 @@ class TimelineMixin:
             ]
         )
 
+    def estimate_speech_ticks(self, text: str) -> int:
+        """Approximate speech playback time in game ticks for pacing."""
+        words = len([w for w in text.split() if w])
+        chars = len(text)
+        # Keep this conservative so follow-up actions do not overlap speech.
+        return max(4, (words * 2) + math.ceil(chars / 16))
+
     def cancel_timeline(self, tag: str) -> None:
         if not tag:
             return
@@ -77,4 +86,3 @@ class TimelineMixin:
                 if user:
                     user.speak(text, buffer)
         self.scheduled_timeline_events = remaining
-

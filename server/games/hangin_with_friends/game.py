@@ -674,12 +674,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.cancel_timeline("hwf-round-flow")
         self._cancel_board_readout_audio()
 
-    def _jolt_bot_after_action(self, player: Player) -> None:
-        if not player.is_bot:
-            return
-        pause_ticks = max(2, self._pacing_ticks("guess_result_pause"))
-        BotHelper.jolt_bot(player, ticks=pause_ticks)
-
     def prestart_validate(self) -> list[str]:
         errors = super().prestart_validate()
         if self.options.min_word_length > self.options.max_word_length:
@@ -735,9 +729,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["menu_open"])
         self.play_sound(SOUNDS["avatar"], volume=70)
         self.play_sound(SOUNDS["shuffle"], volume=85)
-        self._schedule_round_intro(
-            f"Round {self.round}. {setter.name} is choosing a word, {guesser.name} will guess."
-        )
+        intro_text = f"Round {self.round}. {setter.name} is choosing a word, {guesser.name} will guess."
+        self._schedule_round_intro(intro_text)
         rack_delay = self._pacing_ticks("turn_transition") + self._pacing_ticks("post_board_pause")
         rack_text = f"Your rack is: {' '.join(l.upper() for l in self.tile_rack)}"
         self.schedule_timeline_speech(
@@ -754,8 +747,14 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         )
         self._broadcast_spectator_player_boards()
 
-        if setter.is_bot:
-            BotHelper.jolt_bot(setter, ticks=random.randint(6, 12))
+        BotHelper.jolt_bot_for_speech(
+            setter,
+            delay_ticks=self._pacing_ticks("turn_transition"),
+            speech_ticks=self.estimate_speech_ticks(intro_text),
+            post_pause_ticks=self._pacing_ticks("post_board_pause"),
+            min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
+            extra_ticks=self.estimate_speech_ticks(rack_text),
+        )
 
         self.rebuild_all_menus()
 
@@ -793,17 +792,28 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         )
         self.broadcast(self._format_board_modifiers_summary())
         self._spin_wheel(player)
+        selected_text = (
+            f"Word selected. The word has {len(self.secret_word)} letters. "
+            f"Wrong guesses allowed: {self.max_wrong_guesses}."
+        )
         self.schedule_timeline_speech(
-            f"Word selected. The word has {len(self.secret_word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}.",
+            selected_text,
             delay_ticks=self._pacing_ticks("turn_transition"),
             buffer="table",
             include_spectators=True,
             tag="hwf-round-flow",
         )
-        self._announce_guess_state(delay_ticks=self._pacing_ticks("turn_transition"))
+        board_end_delay = self._announce_guess_state(
+            delay_ticks=self._pacing_ticks("turn_transition")
+        )
 
-        if player.is_bot:
-            BotHelper.jolt_bot(player, ticks=random.randint(6, 12))
+        BotHelper.jolt_bot_for_speech(
+            player,
+            delay_ticks=board_end_delay,
+            speech_ticks=self.estimate_speech_ticks(selected_text),
+            post_pause_ticks=self._pacing_ticks("post_board_pause"),
+            min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
+        )
         self.rebuild_all_menus()
 
     # action guards
@@ -945,8 +955,12 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self._clear_round_timeline()
         self.phase = "guessing"
         self.current_player = guesser
+        selected_text = (
+            f"Word selected. The word has {len(word)} letters. "
+            f"Wrong guesses allowed: {self.max_wrong_guesses}."
+        )
         self.schedule_timeline_speech(
-            f"Word selected. The word has {len(word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}.",
+            selected_text,
             delay_ticks=self._pacing_ticks("turn_transition"),
             buffer="table",
             include_spectators=True,
@@ -954,10 +968,17 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         )
         self.broadcast(self._format_board_modifiers_summary())
         self._broadcast_private_to_spectators(f"Secret word chosen by {setter.name}: {self.secret_word.upper()}")
-        self._announce_guess_state(delay_ticks=self._pacing_ticks("turn_transition"))
+        board_end_delay = self._announce_guess_state(
+            delay_ticks=self._pacing_ticks("turn_transition")
+        )
 
-        if guesser.is_bot:
-            BotHelper.jolt_bot(guesser, ticks=random.randint(6, 12))
+        BotHelper.jolt_bot_for_speech(
+            guesser,
+            delay_ticks=board_end_delay,
+            speech_ticks=self.estimate_speech_ticks(selected_text),
+            post_pause_ticks=self._pacing_ticks("post_board_pause"),
+            min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
+        )
         self.rebuild_all_menus()
 
     def _action_guess_letter(self, player: Player, action_id: str) -> None:
@@ -989,9 +1010,18 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.wrong_guesses = max(0, self.wrong_guesses - 1)
         self.play_sound(SOUNDS["use_lifeline"])
         self.play_sound(SOUNDS["lifeline_bounce"])
-        self.broadcast(f"{player.name} removed one strike with a lifeline.")
-        self._announce_guess_state(delay_ticks=self._pacing_ticks("guess_result_pause"))
-        self._jolt_bot_after_action(player)
+        action_text = f"{player.name} removed one strike with a lifeline."
+        self.broadcast(action_text)
+        board_end_delay = self._announce_guess_state(
+            delay_ticks=self._pacing_ticks("guess_result_pause")
+        )
+        BotHelper.jolt_bot_for_speech(
+            player,
+            delay_ticks=board_end_delay,
+            speech_ticks=self.estimate_speech_ticks(action_text),
+            post_pause_ticks=self._pacing_ticks("post_board_pause"),
+            min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
+        )
         self.rebuild_all_menus()
 
     def _action_lifeline_retry(self, player: Player, action_id: str) -> None:
@@ -1003,8 +1033,15 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         player.retry_shield_active = True
         self.play_sound(SOUNDS["use_lifeline"])
         self.play_sound(SOUNDS["lifeline_bounce"])
-        self.broadcast(f"{player.name} activated retry shield lifeline.")
-        self._jolt_bot_after_action(player)
+        action_text = f"{player.name} activated retry shield lifeline."
+        self.broadcast(action_text)
+        BotHelper.jolt_bot_for_speech(
+            player,
+            delay_ticks=0,
+            speech_ticks=self.estimate_speech_ticks(action_text),
+            post_pause_ticks=self._pacing_ticks("post_board_pause"),
+            min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
+        )
         self.rebuild_all_menus()
 
     def _action_set_bot_difficulty(self, player: Player, value: str, action_id: str) -> None:
@@ -1089,23 +1126,34 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             guesser.wrong_streak = 0
             self.play_sound(SOUNDS["history_correct"])
             self.play_sound(CORRECT_SEQUENCE_SOUNDS[min(guesser.correct_streak, 8) - 1])
+            guess_text = f"Correct. {letter.upper()} is in the word."
             if not from_lifeline:
-                self.broadcast(f"Correct. {letter.upper()} is in the word.")
+                self.broadcast(guess_text)
 
             if "_" not in self.masked_word:
                 self._resolve_round(guesser_solved=True)
                 return
         else:
             self._apply_wrong_guess(guesser)
-            self.broadcast(
-                f"Wrong. {letter.upper()} is not in the word. {self.max_wrong_guesses - self.wrong_guesses} mistakes left."
+            guess_text = (
+                f"Wrong. {letter.upper()} is not in the word. "
+                f"{self.max_wrong_guesses - self.wrong_guesses} mistakes left."
             )
+            self.broadcast(guess_text)
             if self.wrong_guesses >= self.max_wrong_guesses:
                 self._resolve_round(guesser_solved=False)
                 return
 
-        self._announce_guess_state(delay_ticks=self._pacing_ticks("guess_result_pause"))
-        self._jolt_bot_after_action(guesser)
+        board_end_delay = self._announce_guess_state(
+            delay_ticks=self._pacing_ticks("guess_result_pause")
+        )
+        BotHelper.jolt_bot_for_speech(
+            guesser,
+            delay_ticks=board_end_delay,
+            speech_ticks=self.estimate_speech_ticks(guess_text if "guess_text" in locals() else ""),
+            post_pause_ticks=self._pacing_ticks("post_board_pause"),
+            min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
+        )
         self.rebuild_all_menus()
 
     def _apply_wrong_guess(self, guesser: HanginWithFriendsPlayer) -> None:
@@ -1138,25 +1186,37 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             self._award_score(guesser, points)
             self.play_sound(CORRECT_SEQUENCE_SOUNDS[7])
             self.play_sound(SOUNDS["balloon"])
-            self.broadcast(f"{guesser.name} solved '{self.secret_word}'. {setter.name} loses a balloon.")
+            result_text = f"{guesser.name} solved '{self.secret_word}'. {setter.name} loses a balloon."
+            self.broadcast(result_text)
         else:
             guesser.balloons_remaining -= 1
             self._award_score(setter, points)
             self.play_sound(INCORRECT_SEQUENCE_SOUNDS[7])
             self.play_sound(SOUNDS["balloon"])
-            self.broadcast(f"{guesser.name} failed to solve '{self.secret_word}'. {guesser.name} loses a balloon.")
+            result_text = f"{guesser.name} failed to solve '{self.secret_word}'. {guesser.name} loses a balloon."
+            self.broadcast(result_text)
 
-        self.broadcast(
+        scoring_text = (
             "Round scoring: "
             f"{self._format_board_modifiers_summary()} "
             f"Word points {word_points}, wheel multiplier x{self.round_points_multiplier}, total {points}."
         )
-        self._eliminate_players_without_balloons()
-        self._announce_balloons()
+        self.broadcast(scoring_text)
+        eliminated_texts = self._eliminate_players_without_balloons()
+        balloons_text = self._announce_balloons()
 
         if self._check_match_end():
             return
-        self.round_resume_tick = self.sound_scheduler_tick + self._pacing_ticks("round_end_pause")
+        round_end_texts = [result_text, scoring_text, balloons_text, *eliminated_texts]
+        text_pause_ticks = sum(
+            self.estimate_speech_ticks(msg) + self._pacing_ticks("post_board_pause")
+            for msg in round_end_texts
+        )
+        self.round_resume_tick = (
+            self.sound_scheduler_tick
+            + self._pacing_ticks("round_end_pause")
+            + text_pause_ticks
+        )
 
     def _award_score(self, player: HanginWithFriendsPlayer, points: int) -> None:
         player.score += points
@@ -1175,23 +1235,30 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["popup"])
         self.broadcast(f"{player.name} reached level {player.level}.")
 
-    def _announce_guess_state(self, *, delay_ticks: int = 0) -> None:
+    def _announce_guess_state(self, *, delay_ticks: int = 0) -> int:
         total_board_ticks = self._schedule_board_readout(delay_ticks=delay_ticks)
         summary_delay = total_board_ticks + self._pacing_ticks("post_board_pause")
         masked = self._spoken_board()
         guessed = ", ".join(l.upper() for l in sorted(self.guessed_letters)) or "none"
+        summary_text = (
+            f"Board: {masked}. Guessed letters: {guessed}. "
+            f"Wrong {self.wrong_guesses}/{self.max_wrong_guesses}."
+        )
         self.schedule_timeline_speech(
-            f"Board: {masked}. Guessed letters: {guessed}. Wrong {self.wrong_guesses}/{self.max_wrong_guesses}.",
+            summary_text,
             delay_ticks=summary_delay,
             buffer="table",
             include_spectators=True,
             tag="hwf-board-readout",
         )
         self._broadcast_spectator_player_boards(delay_ticks=summary_delay)
+        return summary_delay + self.estimate_speech_ticks(summary_text)
 
-    def _announce_balloons(self) -> None:
+    def _announce_balloons(self) -> str:
         parts = [f"{p.name}: {p.balloons_remaining} balloons" for p in self._get_participant_players()]
-        self.broadcast(" | ".join(parts))
+        line = " | ".join(parts)
+        self.broadcast(line)
+        return line
 
     def _check_match_end(self) -> bool:
         players = self._get_participant_players()
@@ -1284,12 +1351,16 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             if not p.is_spectator and p.balloons_remaining > 0
         ]
 
-    def _eliminate_players_without_balloons(self) -> None:
+    def _eliminate_players_without_balloons(self) -> list[str]:
+        eliminated_messages: list[str] = []
         for p in self._get_participant_players():
             if p.balloons_remaining > 0 or p.is_spectator:
                 continue
             p.is_spectator = True
-            self.broadcast(f"{p.name} is eliminated and now spectating.")
+            message = f"{p.name} is eliminated and now spectating."
+            self.broadcast(message)
+            eliminated_messages.append(message)
+        return eliminated_messages
 
     def _finish_with_winner(self, winner: HanginWithFriendsPlayer, message: str) -> None:
         self._clear_round_timeline()

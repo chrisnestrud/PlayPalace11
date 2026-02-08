@@ -391,8 +391,9 @@ class TestHanginPacingProfiles:
 
         pause = PACING_TICKS["slow"]["round_end_pause"]
         assert game.phase == "round_end"
-        assert game.round_resume_tick == game.sound_scheduler_tick + pause
-        for _ in range(pause - 1):
+        resume_delay = game.round_resume_tick - game.sound_scheduler_tick
+        assert resume_delay >= pause
+        for _ in range(resume_delay - 1):
             game.on_tick()
             assert game.phase == "round_end"
 

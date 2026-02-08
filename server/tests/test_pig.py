@@ -12,6 +12,7 @@ import random
 import json
 
 from server.games.pig.game import PigGame, PigOptions
+from server.messages.localization import Localization
 from server.users.test_user import MockUser
 from server.users.bot import Bot
 
@@ -194,6 +195,29 @@ class TestPigGameActions:
 
         assert "roll" in p1_ids
         assert "roll" not in p2_ids
+
+    def test_bot_roll_applies_speech_aware_cooldown(self, monkeypatch):
+        game = PigGame()
+        bot = Bot("Bot1")
+        user = MockUser("Alice")
+        bot_player = game.add_player("Bot1", bot)
+        game.add_player("Alice", user)
+        game.on_start()
+        game.reset_turn_order()
+        if game.current_player != bot_player:
+            game.advance_turn()
+
+        monkeypatch.setattr(random, "randint", lambda a, b: 4)
+        game.execute_action(bot_player, "roll")
+
+        roll_msg = Localization.get("en", "pig-rolls", player="Bot1")
+        result_msg = Localization.get("en", "pig-roll-result", roll=4, total=4)
+        expected_min = (
+            game.estimate_speech_ticks(roll_msg)
+            + game.estimate_speech_ticks(result_msg)
+            + 4
+        )
+        assert bot_player.bot_think_ticks >= min(expected_min, 24)
 
 
 class TestPigPlayTest:

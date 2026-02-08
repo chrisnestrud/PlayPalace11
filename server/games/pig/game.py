@@ -201,12 +201,12 @@ class PigGame(PushYourLuckBotMixin, ActionGuardMixin, Game):
     def _action_roll(self, player: Player, action_id: str) -> None:
         """Handle roll action."""
         pig_player: PigPlayer = player  # type: ignore
+        user = self.get_user(player)
+        locale = user.locale if user else "en"
 
         self.broadcast_l("pig-rolls", player=player.name)
         self.play_sound("game_pig/roll.ogg")
-
-        # Jolt the rolling player to pause before next action
-        BotHelper.jolt_bot(player, ticks=random.randint(10, 20))
+        roll_msg = Localization.get(locale, "pig-rolls", player=player.name)
 
         roll = random.randint(1, self.options.dice_sides)
 
@@ -221,6 +221,17 @@ class PigGame(PushYourLuckBotMixin, ActionGuardMixin, Game):
         else:
             pig_player.round_score += roll
             self.broadcast_l("pig-roll-result", roll=roll, total=pig_player.round_score)
+            result_msg = Localization.get(
+                locale, "pig-roll-result", roll=roll, total=pig_player.round_score
+            )
+            speech_ticks = self.estimate_speech_ticks(roll_msg) + self.estimate_speech_ticks(result_msg)
+            BotHelper.jolt_bot_for_speech(
+                player,
+                speech_ticks=speech_ticks,
+                post_pause_ticks=4,
+                min_ticks=6,
+                max_ticks=24,
+            )
             # Menus will be rebuilt automatically after action execution
 
     def _action_bank(self, player: Player, action_id: str) -> None:

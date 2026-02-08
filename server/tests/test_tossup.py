@@ -12,6 +12,7 @@ import random
 import json
 
 from server.games.tossup.game import TossUpGame, TossUpOptions
+from server.messages.localization import Localization
 from server.users.test_user import MockUser
 from server.users.bot import Bot
 
@@ -127,6 +128,36 @@ class TestTossUpGameActions:
         assert self.player1.turn_points > initial_turn_points
         # Game should still be active and turn should not have ended
         assert self.game.game_active
+
+    def test_bot_roll_applies_speech_aware_cooldown(self, monkeypatch):
+        game = TossUpGame()
+        bot = Bot("Bot1")
+        user = MockUser("Alice")
+        bot_player = game.add_player("Bot1", bot)
+        game.add_player("Alice", user)
+        game.on_start()
+        game.reset_turn_order()
+        if game.current_player != bot_player:
+            game.advance_turn()
+
+        bot_player.dice_count = 2
+        sequence = iter([1, 2])  # 1 green, 1 yellow in Standard mode
+        monkeypatch.setattr(random, "randint", lambda a, b: next(sequence))
+        game.execute_action(bot_player, "roll")
+
+        roll_msg = Localization.get("en", "tossup-you-roll", results="1 green, 1 yellow")
+        status_msg = Localization.get(
+            "en",
+            "tossup-you-have-points",
+            turn_points=1,
+            dice_count=1,
+        )
+        expected_min = (
+            game.estimate_speech_ticks(roll_msg)
+            + game.estimate_speech_ticks(status_msg)
+            + 4
+        )
+        assert bot_player.bot_think_ticks >= min(expected_min, 24)
 
     def test_roll_standard_bust(self):
         """Test bust condition in Standard rules (no greens, at least one red)."""

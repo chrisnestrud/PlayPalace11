@@ -55,6 +55,28 @@ class BotHelper:
             player.bot_pending_action = None
 
     @staticmethod
+    def jolt_bot_for_speech(
+        player: "Player",
+        *,
+        delay_ticks: int = 0,
+        speech_ticks: int = 0,
+        post_pause_ticks: int = 0,
+        min_ticks: int = 2,
+        extra_ticks: int = 0,
+        max_ticks: int | None = None,
+    ) -> None:
+        """Jolt a bot long enough for delayed speech and brief post-speech pause."""
+        if not player.is_bot:
+            return
+        pause_ticks = max(min_ticks, delay_ticks)
+        if speech_ticks > 0:
+            pause_ticks = max(pause_ticks, delay_ticks + speech_ticks + post_pause_ticks)
+        pause_ticks += max(0, extra_ticks)
+        if max_ticks is not None:
+            pause_ticks = min(pause_ticks, max_ticks)
+        BotHelper.jolt_bot(player, ticks=pause_ticks)
+
+    @staticmethod
     def set_target(player: "Player", target: int | None) -> None:
         """Set a game-specific target for a bot."""
         player.bot_target = target
