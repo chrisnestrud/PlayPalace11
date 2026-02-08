@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PlayPalace Web Client</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --panel: #ffffff;
+        --text: #1f2937;
+        --muted: #6b7280;
+        --border: #d1d5db;
+        --primary: #005b99;
+        --danger: #a61b1b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at top left, #ffffff, var(--bg));
+      }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      input, select, button, textarea {
+        font: inherit;
+        padding: 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+      }
+      button {
+        background: var(--primary);
+        color: #fff;
+        border: none;
+        cursor: pointer;
+      }
+      button.secondary { background: #4b5563; }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+      .status { color: var(--muted); }
+      .status.error { color: var(--danger); }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(260px, 0.8fr) minmax(520px, 1.9fr);
+        gap: 12px;
+      }
+      .menu-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        max-height: 440px;
+        overflow-y: auto;
+      }
+      .menu-item {
+        width: 100%;
+        padding: 8px;
+        text-align: left;
+        border-radius: 0;
+        background: #fff;
+        color: var(--text);
+        border-bottom: 1px solid var(--border);
+        cursor: default;
+      }
+      .menu-item:last-child { border-bottom: 0; }
+      .menu-item.active {
+        background: #e5f1fb;
+        outline: 2px solid #93c5fd;
+      }
+      .history {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        min-height: 480px;
+        height: 62vh;
+        overflow-y: auto;
+        padding: 8px;
+        background: #fbfdff;
+        white-space: pre-wrap;
+        resize: none;
+      }
+      .history-entry { margin: 0 0 6px; }
+      dialog {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        width: min(420px, 92vw);
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        border: 0;
+      }
+      @media (max-width: 900px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="panel" aria-label="Connection status">
+        <div class="row">
+          <button id="open-login-btn" type="button" class="secondary" tabindex="-1">Login/Reconnect</button>
+          <button id="disconnect-btn" type="button" class="secondary" tabindex="-1">Disconnect</button>
+          <span id="status" class="status" role="status">Disconnected</span>
+        </div>
+      </section>
+
+      <section id="game-shell" class="grid" hidden>
+        <section class="panel" aria-label="Menu">
+          <div class="row">
+            <strong>Menu</strong>
+          </div>
+          <ul id="menu-list" class="menu-list" tabindex="0" role="listbox"></ul>
+          <section id="inline-input" class="panel" hidden style="margin-top: 8px;">
+            <p id="inline-input-prompt" style="margin: 0 0 6px 0;"></p>
+            <div class="row">
+              <input id="inline-input-value" type="text" style="flex: 1;" />
+              <button id="inline-input-submit" type="button" tabindex="-1">Submit</button>
+              <button id="inline-input-cancel" type="button" class="secondary" tabindex="-1">Cancel</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="panel" aria-label="History and chat">
+          <textarea id="history" class="history" readonly tabindex="0" aria-label="History"></textarea>
+
+          <form id="chat-form" class="row" style="margin-top: 10px;">
+            <label>
+              Chat
+              <input id="chat-input" type="text" placeholder="Type message. Prefix with . for global." size="32" aria-label="Chat" />
+            </label>
+            <button type="submit" tabindex="-1">Send</button>
+          </form>
+        </section>
+      </section>
+
+      <dialog id="input-dialog">
+        <form method="dialog" id="input-dialog-form">
+          <p id="input-prompt"></p>
+          <input id="input-value" type="text" style="width: 100%;" />
+          <div class="row" style="justify-content: flex-end; margin-top: 10px;">
+            <button value="cancel" type="button" id="input-cancel" class="secondary">Cancel</button>
+            <button value="submit" type="submit" id="input-submit">Submit</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="login-dialog">
+        <form id="connect-form" method="dialog">
+          <p><strong>Connect to PlayPalace</strong></p>
+          <div style="display: grid; gap: 8px;">
+            <label>
+              Username
+              <input id="username" type="text" required autocomplete="username" />
+            </label>
+            <label>
+              Password
+              <input id="password" type="password" required autocomplete="current-password" />
+            </label>
+            <label>
+              <input id="remember-me" type="checkbox" />
+              Remember username
+            </label>
+          </div>
+          <div class="row" style="justify-content: flex-end; margin-top: 10px;">
+            <button id="connect-btn" type="submit">Connect</button>
+          </div>
+        </form>
+      </dialog>
+
+      <div id="live-polite" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+      <div id="live-assertive" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
