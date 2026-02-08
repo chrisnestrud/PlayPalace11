@@ -353,6 +353,51 @@ class BoolOption(OptionMeta):
         return True, value.lower() in ("true", "1", "yes")
 
 
+@dataclass
+class TextOption(OptionMeta):
+    """Free-form text option captured via editbox input."""
+
+    value_key: str = "value"
+    max_length: int = 200
+
+    def get_label_kwargs(self, value: Any) -> dict[str, Any]:
+        """Return label kwargs for the current string value."""
+        return {self.value_key: value}
+
+    def get_change_kwargs(self, value: Any) -> dict[str, Any]:
+        """Return change-message kwargs for the current string value."""
+        return {self.value_key: value}
+
+    def create_action(
+        self,
+        option_name: str,
+        game: "Game",
+        player: "Player",
+        current_value: Any,
+        locale: str,
+    ) -> Action:
+        """Create an editbox action for setting a text option."""
+        label = Localization.get(
+            locale, self.label, **self.get_label_kwargs(current_value)
+        )
+        return Action(
+            id=f"set_{option_name}",
+            label=label,
+            handler="_action_set_option",
+            is_enabled="_is_option_enabled",
+            is_hidden="_is_option_hidden",
+            show_in_actions_menu=False,
+            input_request=EditboxInput(
+                prompt=self.prompt,
+                default=str(current_value),
+            ),
+        )
+
+    def validate_and_convert(self, value: str) -> tuple[bool, Any]:
+        """Trim and clamp text length."""
+        return True, value.strip()[: self.max_length]
+
+
 def option_field(meta: OptionMeta) -> Any:
     """Create a dataclass field with option metadata attached.
 

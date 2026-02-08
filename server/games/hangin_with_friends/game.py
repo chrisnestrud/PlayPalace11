@@ -6,6 +6,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import json
+import gzip
 import math
 import random
 import string
@@ -185,6 +187,16 @@ BOT_GUESS_AGGRESSION_LABELS = {
     "risky": "hwf-bot-guess-risky",
 }
 
+WORD_LIST_CHOICES = ["words", "american-english-huge"]
+WORD_LIST_LABELS = {
+    "words": "hwf-word-list-words",
+    "american-english-huge": "hwf-word-list-american-english-huge",
+}
+WORD_LIST_FILES = {
+    "words": "words.txt.gz",
+    "american-english-huge": "american-english-huge.txt.gz",
+}
+
 SOUNDS = {
     "lava": "game_hangin_with_friends/bg_lava5.ogg",
     "click": "game_hangin_with_friends/click.ogg",
@@ -249,6 +261,15 @@ WHEEL_OUTCOMES = [
     "lifeline_retry",
     "nothing",
 ]
+
+VOWELS = {"a", "e", "i", "o", "u"}
+MODIFIER_ORDER = ("double_letter", "triple_letter", "double_word", "triple_word")
+MODIFIER_LABELS = {
+    "double_letter": "double letter",
+    "triple_letter": "triple letter",
+    "double_word": "double word",
+    "triple_word": "triple word",
+}
 
 
 @dataclass
@@ -326,6 +347,17 @@ class HanginWithFriendsOptions(GameOptions):
             change_msg="hwf-option-changed-base-wrong-guesses",
         )
     )
+    word_list: str = option_field(
+        MenuOption(
+            default="words",
+            choices=WORD_LIST_CHOICES,
+            value_key="mode",
+            label="hwf-set-word-list",
+            prompt="hwf-select-word-list",
+            change_msg="hwf-option-changed-word-list",
+            choice_labels=WORD_LIST_LABELS,
+        )
+    )
     max_rounds: int = option_field(
         IntOption(
             default=0,
@@ -368,14 +400,6 @@ class HanginWithFriendsOptions(GameOptions):
             prompt="hwf-select-dictionary-mode",
             change_msg="hwf-option-changed-dictionary-mode",
             choice_labels=DICTIONARY_MODE_LABELS,
-        )
-    )
-    allow_full_word_guess: bool = option_field(
-        BoolOption(
-            default=True,
-            value_key="enabled",
-            label="hwf-toggle-full-word-guess",
-            change_msg="hwf-option-changed-full-word-guess",
         )
     )
     spectators_see_all_actions: bool = option_field(
@@ -421,16 +445,22 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     wheel_result: str = ""
     round_points_multiplier: int = 1
     lava_next_tick: int = 0
+    participant_ids: list[str] = field(default_factory=list)
+    board_modifiers: dict[int, str] = field(default_factory=dict)
 
     def __post_init__(self):
         super().__post_init__()
         self._dictionary_words: tuple[str, ...] = tuple(DEFAULT_WORDS)
         self._dictionary_loaded: bool = False
+        self._modifier_chances_by_length: dict[int, dict[str, float]] = {}
+        self._load_modifier_chances()
 
     def rebuild_runtime_state(self) -> None:
         """Rebuild runtime-only state after load."""
         self._dictionary_words = tuple(DEFAULT_WORDS)
         self._dictionary_loaded = False
+        self._modifier_chances_by_length = {}
+        self._load_modifier_chances()
 
     @classmethod
     def get_name(cls) -> str:
@@ -446,11 +476,11 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
     @classmethod
     def get_min_players(cls) -> int:
-        return 2
+        return 1
 
     @classmethod
     def get_max_players(cls) -> int:
-        return 2
+        return 8
 
     def create_player(
         self, player_id: str, name: str, is_bot: bool = False
@@ -485,20 +515,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                     get_label="_get_guess_letter_label",
                 )
             )
-
-        action_set.add(
-            Action(
-                id="guess_word",
-                label="Guess full word",
-                handler="_action_guess_word",
-                is_enabled="_is_guess_word_enabled",
-                is_hidden="_is_guess_word_hidden",
-                input_request=EditboxInput(
-                    prompt="hwf-prompt-guess-word",
-                    bot_input="_bot_guess_word_input",
-                ),
-            )
-        )
 
         action_set.add(
             Action(
@@ -551,7 +567,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
     def setup_keybinds(self) -> None:
         super().setup_keybinds()
-        self.define_keybind("w", "Guess full word", ["guess_word"], state=KeybindState.ACTIVE)
         self.define_keybind("c", "Choose word", ["choose_word"], state=KeybindState.ACTIVE)
         self.define_keybind("1", "Reveal lifeline", ["lifeline_reveal"], state=KeybindState.ACTIVE)
         self.define_keybind("2", "Remove strike lifeline", ["lifeline_remove"], state=KeybindState.ACTIVE)
@@ -564,6 +579,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.phase = "lobby"
 
         active_players = self.get_active_players()
+        self.participant_ids = [p.id for p in active_players]
         self._team_manager.team_mode = "individual"
         self._team_manager.setup_teams([p.name for p in active_players])
 
@@ -618,8 +634,13 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             return
 
         self.round += 1
-        players = self.turn_players
-        if len(players) < 2:
+        players = self._get_round_eligible_players()
+        if len(players) < 1:
+            return
+        self.set_turn_players(players)
+
+        if len(players) == 1:
+            self._start_solo_round(players[0])
             return
 
         setter = players[(self.round - 1) % len(players)]
@@ -660,6 +681,48 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
         self.rebuild_all_menus()
 
+    def _start_solo_round(self, player: HanginWithFriendsPlayer) -> None:
+        self.setter_id = player.id
+        self.guesser_id = player.id
+        self.tile_rack = self._generate_rack(self.round)
+        self.guessed_letters = []
+        self.wrong_guesses = 0
+        self.max_wrong_guesses = 0
+        self.wheel_result = ""
+        self.round_points_multiplier = 1
+        player.retry_shield_active = False
+
+        candidates = self._get_words_for_rack()
+        if candidates:
+            self.secret_word = self._select_bot_word_by_difficulty(
+                candidates, self.options.default_bot_difficulty
+            )
+        else:
+            rack_letters = self.tile_rack[: self.options.max_word_length]
+            fallback = "".join(rack_letters[: self.options.min_word_length]).lower()
+            self.secret_word = fallback if fallback else "aaa"
+        self._initialize_board(self.secret_word)
+        self.max_wrong_guesses = self.options.base_wrong_guesses + len(self.secret_word)
+
+        self.phase = "guessing"
+        self.current_player = player
+
+        self.play_sound(SOUNDS["menu_open"])
+        self.play_sound(SOUNDS["shuffle"], volume=85)
+        self.broadcast(
+            f"Round {self.round}. Solo mode: {player.name} is guessing."
+        )
+        self.broadcast(self._format_board_modifiers_summary())
+        self._spin_wheel(player)
+        self.broadcast(
+            f"Word selected. The word has {len(self.secret_word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}."
+        )
+        self._announce_guess_state()
+
+        if player.is_bot:
+            BotHelper.jolt_bot(player, ticks=random.randint(6, 12))
+        self.rebuild_all_menus()
+
     # action guards
     def _is_choose_word_enabled(self, player: Player) -> str | None:
         error = self.guard_turn_action_enabled(player)
@@ -690,21 +753,13 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             extra_condition=(self.phase == "guessing" and player.id == self.guesser_id and letter not in self.guessed_letters),
         )
 
-    def _is_guess_word_enabled(self, player: Player) -> str | None:
+    def _is_guesser_turn_enabled(self, player: Player) -> str | None:
         error = self.guard_turn_action_enabled(player)
         if error:
             return error
-        if not self.options.allow_full_word_guess:
-            return "action-not-available"
         if self.phase != "guessing" or player.id != self.guesser_id:
             return "action-not-available"
         return None
-
-    def _is_guess_word_hidden(self, player: Player) -> Visibility:
-        return self.turn_action_visibility(
-            player,
-            extra_condition=(self.options.allow_full_word_guess and self.phase == "guessing" and player.id == self.guesser_id),
-        )
 
     def _is_set_bot_difficulty_enabled(self, player: Player) -> str | None:
         if self.status != "waiting":
@@ -721,7 +776,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         return Visibility.VISIBLE if any(p.is_bot for p in self.players) else Visibility.HIDDEN
 
     def _is_lifeline_reveal_enabled(self, player: Player) -> str | None:
-        error = self._is_guess_word_enabled(player)
+        error = self._is_guesser_turn_enabled(player)
         if error:
             return error
         return None if isinstance(player, HanginWithFriendsPlayer) and player.lifeline_reveal > 0 else "action-not-available"
@@ -731,7 +786,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         return self.turn_action_visibility(player, extra_condition=self.phase == "guessing" and player.id == self.guesser_id and cond)
 
     def _is_lifeline_remove_enabled(self, player: Player) -> str | None:
-        error = self._is_guess_word_enabled(player)
+        error = self._is_guesser_turn_enabled(player)
         if error:
             return error
         if not isinstance(player, HanginWithFriendsPlayer) or player.lifeline_remove <= 0:
@@ -745,7 +800,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         return self.turn_action_visibility(player, extra_condition=self.phase == "guessing" and player.id == self.guesser_id and cond)
 
     def _is_lifeline_retry_enabled(self, player: Player) -> str | None:
-        error = self._is_guess_word_enabled(player)
+        error = self._is_guesser_turn_enabled(player)
         if error:
             return error
         if not isinstance(player, HanginWithFriendsPlayer) or player.lifeline_retry <= 0:
@@ -792,7 +847,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             return
 
         self.secret_word = word
-        self.masked_word = "".join("_" for _ in word)
+        self._initialize_board(word)
         self.max_wrong_guesses = self.options.base_wrong_guesses + len(word)
 
         guesser = self.get_player_by_id(self.guesser_id)
@@ -809,6 +864,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.broadcast(
             f"Word selected. The word has {len(word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}."
         )
+        self.broadcast(self._format_board_modifiers_summary())
         self._broadcast_private_to_spectators(f"Secret word chosen by {setter.name}: {self.secret_word.upper()}")
         self._announce_guess_state()
 
@@ -820,33 +876,6 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["click2"], volume=80)
         letter = action_id.rsplit("_", 1)[-1]
         self._resolve_letter_guess(letter)
-
-    def _action_guess_word(self, player: Player, input_value: str, action_id: str) -> None:
-        self.play_sound(SOUNDS["click"])
-        if not self.options.allow_full_word_guess:
-            return
-
-        guess = self._normalize_word(input_value)
-        if guess is None:
-            user = self.get_user(player)
-            if user:
-                user.speak("Word guess must contain letters only.", "table")
-            return
-
-        if guess == self.secret_word:
-            self.play_sound(SOUNDS["history_correct"])
-            self._resolve_round(guesser_solved=True)
-            return
-
-        self._apply_wrong_guess(player)
-        self.broadcast(
-            f"{player.name} guessed the wrong word. {self.max_wrong_guesses - self.wrong_guesses} mistakes left."
-        )
-        if self.wrong_guesses >= self.max_wrong_guesses:
-            self._resolve_round(guesser_solved=False)
-            return
-        self._announce_guess_state()
-        self.rebuild_all_menus()
 
     def _action_lifeline_reveal(self, player: Player, action_id: str) -> None:
         if not isinstance(player, HanginWithFriendsPlayer) or player.lifeline_reveal <= 0:
@@ -1010,7 +1039,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             return
 
         self.phase = "round_end"
-        points = self.round_points_multiplier
+        word_points = self._score_word_with_board_modifiers(self.secret_word)
+        points = word_points * self.round_points_multiplier
         if guesser_solved:
             setter.balloons_remaining -= 1
             self._award_score(guesser, points)
@@ -1024,6 +1054,12 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             self.play_sound(SOUNDS["balloon"])
             self.broadcast(f"{guesser.name} failed to solve '{self.secret_word}'. {guesser.name} loses a balloon.")
 
+        self.broadcast(
+            "Round scoring: "
+            f"{self._format_board_modifiers_summary()} "
+            f"Word points {word_points}, wheel multiplier x{self.round_points_multiplier}, total {points}."
+        )
+        self._eliminate_players_without_balloons()
         self._announce_balloons()
 
         if self._check_match_end():
@@ -1048,27 +1084,29 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.broadcast(f"{player.name} reached level {player.level}.")
 
     def _announce_guess_state(self) -> None:
-        masked = self._spoken_masked_word()
+        masked = self._spoken_board()
         guessed = ", ".join(l.upper() for l in sorted(self.guessed_letters)) or "none"
-        self.broadcast(f"Word: {masked}. Guessed letters: {guessed}. Wrong {self.wrong_guesses}/{self.max_wrong_guesses}.")
+        self.broadcast(f"Board: {masked}. Guessed letters: {guessed}. Wrong {self.wrong_guesses}/{self.max_wrong_guesses}.")
         self._broadcast_spectator_player_boards()
 
     def _announce_balloons(self) -> None:
-        parts = [f"{p.name}: {p.balloons_remaining} balloons" for p in self.get_active_players()]
+        parts = [f"{p.name}: {p.balloons_remaining} balloons" for p in self._get_participant_players()]
         self.broadcast(" | ".join(parts))
 
     def _check_match_end(self) -> bool:
-        active_players = self.get_active_players()
-        if not active_players:
+        players = self._get_participant_players()
+        if not players:
             return False
 
-        ranked = sorted(active_players, key=lambda p: (p.score, p.balloons_remaining), reverse=True)
+        ranked = sorted(players, key=lambda p: (p.score, p.balloons_remaining), reverse=True)
         winner = ranked[0]
+        contenders = [p for p in players if p.balloons_remaining > 0]
 
-        losers = [p for p in active_players if p.balloons_remaining <= 0]
-        if losers:
-            loser_names = ", ".join(p.name for p in losers)
-            self._finish_with_winner(winner, f"{loser_names} ran out of balloons. {winner.name} wins the match.")
+        if len(players) == 1 and players[0].balloons_remaining <= 0:
+            self._finish_with_winner(
+                winner,
+                f"{winner.name} ran out of balloons. Match over.",
+            )
             return True
 
         if self.options.max_score > 0 and winner.score >= self.options.max_score:
@@ -1077,6 +1115,19 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
         if self.options.max_rounds > 0 and self.round >= self.options.max_rounds:
             self._finish_with_winner(winner, f"Round limit {self.options.max_rounds} reached. {winner.name} wins the match.")
+            return True
+
+        if len(players) > 1 and len(contenders) <= 1:
+            if contenders:
+                self._finish_with_winner(
+                    contenders[0],
+                    f"All but one players ran out of balloons. {contenders[0].name} wins the match.",
+                )
+            else:
+                self._finish_with_winner(
+                    winner,
+                    f"All players ran out of balloons. {winner.name} wins the match by score.",
+                )
             return True
 
         return False
@@ -1094,7 +1145,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     def _broadcast_spectator_player_boards(self) -> None:
         if not self.options.spectators_see_all_actions:
             return
-        for participant in self.get_active_players():
+        for participant in self._get_participant_players():
             if participant.is_spectator:
                 continue
             self._broadcast_private_to_spectators(
@@ -1102,6 +1153,31 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 f"coins {participant.coins}, reveal {participant.lifeline_reveal}, "
                 f"remove {participant.lifeline_remove}, retry {participant.lifeline_retry}."
             )
+
+    def _get_participant_players(self) -> list[HanginWithFriendsPlayer]:
+        if self.participant_ids:
+            out: list[HanginWithFriendsPlayer] = []
+            for pid in self.participant_ids:
+                p = self.get_player_by_id(pid)
+                if isinstance(p, HanginWithFriendsPlayer):
+                    out.append(p)
+            if out:
+                return out
+        return [p for p in self.players if isinstance(p, HanginWithFriendsPlayer)]
+
+    def _get_round_eligible_players(self) -> list[HanginWithFriendsPlayer]:
+        return [
+            p
+            for p in self._get_participant_players()
+            if not p.is_spectator and p.balloons_remaining > 0
+        ]
+
+    def _eliminate_players_without_balloons(self) -> None:
+        for p in self._get_participant_players():
+            if p.balloons_remaining > 0 or p.is_spectator:
+                continue
+            p.is_spectator = True
+            self.broadcast(f"{p.name} is eliminated and now spectating.")
 
     def _finish_with_winner(self, winner: HanginWithFriendsPlayer, message: str) -> None:
         self.phase = "game_end"
@@ -1133,11 +1209,15 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             return "lifeline_reveal"
 
         candidates = self._get_candidate_words()
-        guess_limit = {"safe": 1, "balanced": 2, "risky": 4}.get(self.options.bot_guess_aggression, 2)
-        if self.options.allow_full_word_guess and 0 < len(candidates) <= guess_limit:
-            return "guess_word"
-
-        letter = self._best_guess_letter(candidates)
+        difficulty = self._effective_bot_difficulty(player)
+        if difficulty == "easy":
+            letter = self._easy_pick_letter()
+        elif difficulty == "medium":
+            letter = self._best_guess_letter(candidates)
+        elif difficulty == "hard":
+            letter = self._best_pick_letter_elimination(candidates)
+        else:
+            letter = self._best_pick_letter_entropy(candidates)
         if not letter:
             for char in string.ascii_lowercase:
                 if char not in self.guessed_letters:
@@ -1152,36 +1232,57 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             return "".join(rack_letters[: self.options.min_word_length])
         return self._select_bot_word_by_difficulty(candidates, self._effective_bot_difficulty(player))
 
-    def _bot_guess_word_input(self, player: Player) -> str:
-        candidates = self._get_candidate_words()
-        if candidates:
-            return candidates[0]
-        guess = self.masked_word.replace("_", "a")
-        return guess if guess else "aaa"
-
     def _get_words_for_rack(self) -> list[str]:
         return [w for w in self._dictionary_words if self._word_uses_rack(w)]
 
     def _get_candidate_words(self) -> list[str]:
         if not self.secret_word:
             return []
-        wrong_letters = {letter for letter in self.guessed_letters if letter not in self.secret_word}
-        pattern = self.masked_word
-        out: list[str] = []
-        for word in self._dictionary_words:
-            if len(word) != len(pattern):
+        return self._get_words_matching_row(
+            words=self._dictionary_words,
+            row=self.masked_word,
+            tried_letters=set(self.guessed_letters),
+        )
+
+    def _word_matches_row(self, word: str, row: str) -> bool:
+        if len(word) != len(row):
+            return False
+        for idx, val in enumerate(row):
+            if val in ("_", "?"):
                 continue
-            valid = True
-            for idx, ch in enumerate(pattern):
-                if ch != "_" and word[idx] != ch:
-                    valid = False
-                    break
-                if ch == "_" and word[idx] in wrong_letters:
-                    valid = False
-                    break
-            if valid:
-                out.append(word)
+            if word[idx] != val:
+                return False
+        return True
+
+    def _get_strike_letters(self, row: str, tried_letters: set[str]) -> set[str]:
+        row_letters = {ch for ch in row if ch not in ("_", "?")}
+        return {letter for letter in tried_letters if letter not in row_letters}
+
+    def _get_words_matching_row(
+        self, words: tuple[str, ...] | list[str], row: str, tried_letters: set[str]
+    ) -> list[str]:
+        strike_letters = self._get_strike_letters(row=row, tried_letters=tried_letters)
+        out: list[str] = []
+        for word in words:
+            if not self._word_matches_row(word=word, row=row):
+                continue
+            if any(letter in word for letter in strike_letters):
+                continue
+            out.append(word)
         return out
+
+    def _get_letter_frequencies(
+        self, words: list[str], row: str, tried_letters: set[str]
+    ) -> dict[str, int]:
+        strike_letters = self._get_strike_letters(row=row, tried_letters=tried_letters)
+        letters_on_row = {letter for letter in row if letter not in ("_", "?")}
+        freqs: dict[str, int] = {}
+        for word in words:
+            for letter in set(word):
+                if letter in letters_on_row or letter in strike_letters:
+                    continue
+                freqs[letter] = freqs.get(letter, 0) + 1
+        return freqs
 
     def _best_guess_letter(self, candidates: list[str]) -> str | None:
         freqs: dict[str, int] = {}
@@ -1194,6 +1295,54 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         if not freqs:
             return None
         return max(freqs.items(), key=lambda kv: (kv[1], kv[0]))[0]
+
+    def _easy_pick_letter(self) -> str | None:
+        unguessed = [c for c in string.ascii_lowercase if c not in self.guessed_letters]
+        if not unguessed:
+            return None
+        return random.choice(unguessed)
+
+    def _best_pick_letter_elimination(self, candidates: list[str]) -> str | None:
+        if not candidates:
+            return None
+        freqs = self._get_letter_frequencies(
+            words=candidates,
+            row=self.masked_word,
+            tried_letters=set(self.guessed_letters),
+        )
+        if not freqs:
+            return None
+        return max(freqs.items(), key=lambda kv: (kv[1], kv[0]))[0]
+
+    def _best_pick_letter_entropy(self, candidates: list[str]) -> str | None:
+        if not candidates:
+            return None
+        total = len(candidates)
+        if total == 0:
+            return None
+        guessed = set(self.guessed_letters)
+        best_letter: str | None = None
+        best_score = -1
+        for letter in string.ascii_lowercase:
+            if letter in guessed:
+                continue
+            present = sum(1 for word in candidates if letter in word)
+            absent = total - present
+            score = min(present, absent)
+            if score > best_score or (score == best_score and best_letter and letter > best_letter):
+                best_score = score
+                best_letter = letter
+        return best_letter
+
+    def _debug_best_pick(self) -> dict[str, str | int | None]:
+        candidates = self._get_candidate_words()
+        return {
+            "candidate_count": len(candidates),
+            "easy": self._easy_pick_letter(),
+            "medium": self._best_guess_letter(candidates),
+            "hard": self._best_pick_letter_elimination(candidates),
+            "extreme": self._best_pick_letter_entropy(candidates),
+        }
 
     def _score_word(self, word: str) -> int:
         return sum(LETTER_SCORES.get(char.upper(), 0) for char in word)
@@ -1271,6 +1420,107 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         rng = random.Random(self.rng_seed + (round_number * 7919))
         return [rng.choice(LETTER_POOL).lower() for _ in range(self.options.rack_size)]
 
+    def _format_positions(self, positions: list[int]) -> str:
+        if not positions:
+            return "none"
+        return ", ".join(str(pos) for pos in sorted(positions))
+
+    def _load_modifier_chances(self) -> None:
+        config_path = Path(__file__).with_name("modifier_chances_by_length.json")
+        if not config_path.exists():
+            return
+        try:
+            raw = json.loads(config_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return
+        parsed: dict[int, dict[str, float]] = {}
+        for length_str, payload in raw.items():
+            try:
+                length = int(length_str)
+            except (TypeError, ValueError):
+                continue
+            if length < 1 or not isinstance(payload, dict):
+                continue
+            row: dict[str, float] = {}
+            for key in MODIFIER_ORDER:
+                value = payload.get(key, 0.0)
+                try:
+                    row[key] = max(0.0, min(100.0, float(value)))
+                except (TypeError, ValueError):
+                    row[key] = 0.0
+            parsed[length] = row
+        self._modifier_chances_by_length = parsed
+
+    def _modifier_chances_for_length(self, length: int) -> dict[str, float]:
+        if length in self._modifier_chances_by_length:
+            return self._modifier_chances_by_length[length]
+        if not self._modifier_chances_by_length:
+            return {
+                "double_letter": 10.67,
+                "triple_letter": 7.56,
+                "double_word": 5.33,
+                "triple_word": 3.56,
+            }
+        nearest = min(self._modifier_chances_by_length.keys(), key=lambda k: abs(k - length))
+        return self._modifier_chances_by_length[nearest]
+
+    def _roll_board_modifiers(self, word: str) -> dict[int, str]:
+        chances = self._modifier_chances_for_length(len(word))
+        modifiers: dict[int, str] = {}
+        for idx in range(1, len(word) + 1):
+            for kind in MODIFIER_ORDER:
+                chance = chances.get(kind, 0.0)
+                if random.random() * 100.0 < chance:
+                    modifiers[idx] = kind
+                    break
+        return modifiers
+
+    def _initialize_board(self, word: str) -> None:
+        self.secret_word = word
+        self.masked_word = "".join("_" for _ in word)
+        self.board_modifiers = self._roll_board_modifiers(word)
+        for idx in range(len(word) - 1, -1, -1):
+            if word[idx] in VOWELS:
+                self.masked_word = (
+                    self.masked_word[:idx] + word[idx] + self.masked_word[idx + 1 :]
+                )
+                if word[idx] not in self.guessed_letters:
+                    self.guessed_letters.append(word[idx])
+                break
+
+    def _format_board_modifiers_summary(self) -> str:
+        by_kind: dict[str, list[int]] = {kind: [] for kind in MODIFIER_ORDER}
+        for pos, kind in self.board_modifiers.items():
+            if kind in by_kind:
+                by_kind[kind].append(pos)
+        return (
+            "Board modifiers: "
+            f"DL [{self._format_positions(by_kind['double_letter'])}], "
+            f"TL [{self._format_positions(by_kind['triple_letter'])}], "
+            f"DW [{self._format_positions(by_kind['double_word'])}], "
+            f"TW [{self._format_positions(by_kind['triple_word'])}]."
+        )
+
+    def _score_word_with_board_modifiers(self, word: str) -> int:
+        if not word:
+            return 1
+
+        subtotal = 0
+        word_mult = 1
+        for idx, letter in enumerate(word, start=1):
+            letter_mult = 1
+            kind = self.board_modifiers.get(idx)
+            if kind == "double_letter":
+                letter_mult *= 2
+            if kind == "triple_letter":
+                letter_mult *= 3
+            subtotal += LETTER_SCORES.get(letter.upper(), 0) * letter_mult
+            if kind == "double_word":
+                word_mult *= 2
+            if kind == "triple_word":
+                word_mult *= 3
+        return max(1, subtotal * word_mult)
+
     def _word_uses_rack(self, word: str) -> bool:
         rack_counts = Counter(self.tile_rack)
         word_counts = Counter(word)
@@ -1280,15 +1530,30 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         word = value.strip().lower()
         return word if word.isalpha() else None
 
-    def _spoken_masked_word(self) -> str:
-        """Format masked word for speech, using 'blank' for hidden letters."""
-        parts = [("blank" if ch == "_" else ch.lower()) for ch in self.masked_word]
+    def _spoken_board(self) -> str:
+        """Format board for speech with modifier tags at each position."""
+        parts: list[str] = []
+        for idx, ch in enumerate(self.masked_word, start=1):
+            token = "blank" if ch == "_" else ch.lower()
+            kind = self.board_modifiers.get(idx)
+            if kind:
+                token = f"{token} {MODIFIER_LABELS[kind]}"
+            parts.append(token)
         return ", ".join(parts)
 
     def _load_dictionary(self) -> None:
         if self._dictionary_loaded:
             return
-        candidate_paths = [Path(__file__).with_name("words.txt"), Path("/tmp/hanging/words.txt")]
+        selected = (
+            self.options.word_list
+            if self.options.word_list in WORD_LIST_CHOICES
+            else "words"
+        )
+        filename = WORD_LIST_FILES[selected]
+        candidate_paths = [
+            Path(__file__).with_name("word_lists") / filename,
+            Path("/tmp/hanging") / filename.replace(".gz", ""),
+        ]
         loaded: list[str] = []
         for path in candidate_paths:
             if not path.exists():
@@ -1302,8 +1567,12 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
     def _read_words(self, path: Path) -> list[str]:
         words: set[str] = set()
-        max_words = 50000
-        with path.open("r", encoding="utf-8", errors="ignore") as fp:
+        max_words = 250000
+        if path.suffix == ".gz":
+            fp_ctx = gzip.open(path, "rt", encoding="utf-8", errors="ignore")
+        else:
+            fp_ctx = path.open("rt", encoding="utf-8", errors="ignore")
+        with fp_ctx as fp:
             for line in fp:
                 word = line.strip().lower()
                 if not word.isalpha():
@@ -1316,7 +1585,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         return sorted(words)
 
     def build_game_result(self) -> GameResult:
-        players = self.get_active_players()
+        players = self._get_participant_players()
         winner = max(players, key=lambda p: (p.score, p.balloons_remaining), default=None)
         return GameResult(
             game_type=self.get_type(),

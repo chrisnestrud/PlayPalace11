@@ -22,8 +22,8 @@ class TestHanginWithFriendsUnit:
         assert game.get_name() == "Hangin' with Friends"
         assert game.get_type() == "hangin_with_friends"
         assert game.get_category() == "category-word-games"
-        assert game.get_min_players() == 2
-        assert game.get_max_players() == 2
+        assert game.get_min_players() == 1
+        assert game.get_max_players() == 8
 
     def test_player_creation(self):
         game = HanginWithFriendsGame()
@@ -37,6 +37,7 @@ class TestHanginWithFriendsUnit:
         assert game.options.max_rounds == 0
         assert game.options.max_score == 0
         assert game.options.spectators_see_all_actions is True
+        assert game.options.word_list == "words"
 
     def test_serialization(self):
         game = HanginWithFriendsGame()
@@ -137,7 +138,7 @@ class TestHanginWithFriendsActions:
         self.game.execute_action(self.p1, "choose_word", "planet")
         assert self.game.phase == "guessing"
         assert self.game.current_player == self.p2
-        assert self.game.masked_word == "______"
+        assert self.game.masked_word == "____e_"
 
         self.game.execute_action(self.p2, "guess_letter_p")
         assert self.game.masked_word[0] == "p"
@@ -153,6 +154,8 @@ class TestHanginWithFriendsActions:
         self.game.execute_action(self.p2, "guess_letter_t")
 
         assert self.p1.balloons_remaining == before - 1
+        spoken = self.user1.get_spoken_messages() + self.user2.get_spoken_messages()
+        assert any(msg.startswith("Round scoring:") for msg in spoken)
 
     def test_failed_round_makes_guesser_lose_balloon(self):
         self._force_round(self.p1, self.p2, "cat")
@@ -198,6 +201,42 @@ class TestHanginWithFriendsActions:
         self.p2.balloons_remaining = 2
         assert self.game._check_match_end() is False
 
+    def test_multiplayer_eliminated_player_becomes_spectator(self):
+        self.game.options.starting_balloons = 1
+        self.p2.balloons_remaining = 1
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.game.max_wrong_guesses = 1
+        self.game.execute_action(self.p2, "guess_letter_z")
+        assert self.p2.balloons_remaining == 0
+        assert self.p2.is_spectator is True
+
+    def test_game_result_includes_eliminated_participants(self):
+        self.p2.balloons_remaining = 0
+        self.p2.is_spectator = True
+        self.game.participant_ids = [self.p1.id, self.p2.id]
+        result = self.game.build_game_result()
+        names = {pr.player_name for pr in result.player_results}
+        assert {"Alice", "Bob"} <= names
+
+    def test_solo_round_auto_picks_word_by_default_bot_difficulty(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        user = MockUser("Solo")
+        player = game.add_player("Solo", user)
+        game.options.default_bot_difficulty = "extreme"
+        game.options.rack_size = 13
+        game.options.min_word_length = 3
+        game.options.max_word_length = 8
+        game._dictionary_words = ("eat", "dog", "queen", "jazz")
+        game._dictionary_loaded = True
+        monkeypatch.setattr(game, "_load_dictionary", lambda: None)
+        monkeypatch.setattr(game, "_generate_rack", lambda _round: list("eatdogqueenjzz"))
+
+        game.on_start()
+        assert game.phase == "guessing"
+        assert game.current_player == player
+        assert game.secret_word == "jazz"
+
 
 class TestHanginSpectatorVisibility:
     """Spectator private-state visibility tests."""
@@ -228,6 +267,7 @@ class TestHanginSpectatorVisibility:
         assert any(msg.startswith("Secret word chosen by Alice: PLANET") for msg in spoken)
         assert any(msg.startswith("Alice board:") for msg in spoken)
         assert any(msg.startswith("Bob board:") for msg in spoken)
+        assert any(msg.startswith("Board modifiers:") for msg in spoken)
 
     def test_spectator_private_state_hidden_when_disabled(self):
         game, p1, p2, spectator = self._setup_game(False)
@@ -237,6 +277,7 @@ class TestHanginSpectatorVisibility:
         assert not any(msg.startswith("Secret word chosen by Alice: PLANET") for msg in spoken)
         assert not any(msg.startswith("Alice board:") for msg in spoken)
         assert not any(msg.startswith("Bob board:") for msg in spoken)
+        assert any(msg.startswith("Board modifiers:") for msg in spoken)
 
 
 class TestHanginWithFriendsPlay:
@@ -271,6 +312,76 @@ class TestHanginWithFriendsPlay:
             game.on_tick()
 
         assert not game.game_active, "Game should complete with two bots"
+
+
+class TestHanginWithFriendsPlayOutcomes:
+    """Play-style outcome tests with bots driving the game loop."""
+
+    def _run_until_done(self, game: HanginWithFriendsGame, max_ticks: int = 5000) -> None:
+        for _ in range(max_ticks):
+            if not game.game_active:
+                return
+            game.on_tick()
+        raise AssertionError("Game did not finish within tick budget")
+
+    def test_play_solo_ends_by_round_limit(self):
+        random.seed(2026)
+        game = HanginWithFriendsGame(
+            options=HanginWithFriendsOptions(
+                starting_balloons=10,
+                max_rounds=2,
+                max_score=0,
+                base_wrong_guesses=2,
+            )
+        )
+        bot = Bot("SoloBot")
+        game.add_player("SoloBot", bot)
+        game.on_start()
+        self._run_until_done(game)
+        assert not game.game_active
+        assert game.status == "finished"
+        assert game.round >= 2
+
+    def test_play_multiplayer_ends_by_score_limit(self):
+        random.seed(3030)
+        game = HanginWithFriendsGame(
+            options=HanginWithFriendsOptions(
+                starting_balloons=5,
+                max_rounds=0,
+                max_score=3,
+                base_wrong_guesses=2,
+            )
+        )
+        b1 = Bot("BotA")
+        b2 = Bot("BotB")
+        game.add_player("BotA", b1)
+        game.add_player("BotB", b2)
+        game.on_start()
+        self._run_until_done(game)
+        assert not game.game_active
+        assert game.status == "finished"
+        participants = game._get_participant_players()
+        assert any(p.score >= 3 for p in participants)
+
+    def test_play_multiplayer_ends_by_elimination(self):
+        random.seed(4040)
+        game = HanginWithFriendsGame(
+            options=HanginWithFriendsOptions(
+                starting_balloons=1,
+                max_rounds=0,
+                max_score=0,
+                base_wrong_guesses=0,
+            )
+        )
+        bots = [Bot("B1"), Bot("B2"), Bot("B3")]
+        for bot in bots:
+            game.add_player(bot.username, bot)
+        game.on_start()
+        self._run_until_done(game, max_ticks=8000)
+        assert not game.game_active
+        assert game.status == "finished"
+        alive = [p for p in game._get_participant_players() if p.balloons_remaining > 0]
+        assert len(alive) <= 1
 
 
 class TestHanginCoverageEdges:
@@ -317,7 +428,6 @@ class TestHanginCoverageEdges:
     def test_setup_keybinds_and_start_round_match_end_guard(self, monkeypatch):
         game = HanginWithFriendsGame()
         game.setup_keybinds()
-        assert "w" in game._keybinds
         assert "c" in game._keybinds
         assert "1" in game._keybinds
         assert "2" in game._keybinds
@@ -338,7 +448,23 @@ class TestHanginCoverageEdges:
         solo.round = 0
         solo._start_round()
         assert solo.round == 1
-        assert solo.phase == "lobby"
+        assert solo.phase == "guessing"
+
+    def test_start_round_no_eligible_players(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        u1 = MockUser("A")
+        u2 = MockUser("B")
+        p1 = game.add_player("A", u1)
+        p2 = game.add_player("B", u2)
+        game.participant_ids = [p1.id, p2.id]
+        p1.is_spectator = True
+        p2.is_spectator = True
+        game.round = 0
+        game.phase = "lobby"
+        monkeypatch.setattr(game, "_check_match_end", lambda: False)
+        game._start_round()
+        assert game.round == 1
+        assert game.phase == "lobby"
 
     def test_action_choose_word_invalid_paths(self):
         setter, _ = self._start_two_player_round()
@@ -368,7 +494,7 @@ class TestHanginCoverageEdges:
         self.game.execute_action(setter, "choose_word", "planet")
         assert self.game.phase == "choose_word"
 
-    def test_action_guess_word_invalid_and_no_fullword(self):
+    def test_guess_action_removed(self):
         game = HanginWithFriendsGame()
         u1 = MockUser("S1")
         u2 = MockUser("S2")
@@ -381,25 +507,15 @@ class TestHanginCoverageEdges:
         game.current_player = p1
         game.tile_rack = list("planetzzzzzz")
         game.execute_action(p1, "choose_word", "planet")
-        game.options.allow_full_word_guess = False
-        game.execute_action(p2, "guess_word", "planet")
-        game.options.allow_full_word_guess = True
-        game.execute_action(p2, "guess_word", "12")
-        spoken = game.get_user(p2).get_spoken_messages()
-        assert any("Word guess must contain letters only." in m for m in spoken)
+        action_set = game.get_action_set(p2, "turn")
+        assert action_set is not None
+        assert action_set.get_action("guess_word") is None
 
-    def test_action_guess_word_disabled_and_wrong_guess_paths(self):
+    def test_guesses_are_letter_only(self):
         setter, guesser = self._start_two_player_round()
         self.game.execute_action(setter, "choose_word", "planet")
-        self.game.options.allow_full_word_guess = False
         wrong_before = self.game.wrong_guesses
-        self.game._action_guess_word(guesser, "planet", "guess_word")
-        assert self.game.wrong_guesses == wrong_before
-
-        self.game.options.allow_full_word_guess = True
-        self.game.max_wrong_guesses = 5
-        self.game._action_guess_word(guesser, "plank", "guess_word")
-        assert self.game.phase == "guessing"
+        self.game.execute_action(guesser, "guess_letter_z")
         assert self.game.wrong_guesses == wrong_before + 1
 
     def test_lifeline_actions_and_guards(self):
@@ -521,11 +637,10 @@ class TestHanginCoverageEdges:
         guesser.lifeline_reveal = 1
         assert self.game.bot_think(guesser) == "lifeline_reveal"
 
-        # guess_word fallback
+        # candidate fallback
         self.game.masked_word = "____"
         self.game.secret_word = ""
         assert self.game._get_candidate_words() == []
-        assert self.game._bot_guess_word_input(guesser) == "aaaa"
 
         # choose_word fallback with no candidates
         self.game.tile_rack = list("zzzzzzzzzzzz")
@@ -582,7 +697,7 @@ class TestHanginCoverageEdges:
         self.game._resolve_letter_guess("p")
         assert (self.game.masked_word, self.game.guessed_letters) == first_state
 
-    def test_guess_word_wrong_guess_resolve_round_branch(self, monkeypatch):
+    def test_wrong_letter_resolve_round_branch(self, monkeypatch):
         setter, guesser = self._start_two_player_round()
         self.game.execute_action(setter, "choose_word", "planet")
         self.game.max_wrong_guesses = 1
@@ -593,7 +708,7 @@ class TestHanginCoverageEdges:
             called["value"] = guesser_solved
 
         monkeypatch.setattr(self.game, "_resolve_round", fake_resolve_round)
-        self.game._action_guess_word(guesser, "plank", "guess_word")
+        self.game.execute_action(guesser, "guess_letter_z")
         assert called["value"] is False
 
     def test_resolve_round_missing_players_and_level_up(self):
@@ -613,6 +728,30 @@ class TestHanginCoverageEdges:
         spectator = game.add_spectator("Spec", MockUser("Spec"))
         assert spectator.is_spectator
         assert game._check_match_end() is False
+
+    def test_check_match_end_no_players(self):
+        game = HanginWithFriendsGame()
+        assert game._check_match_end() is False
+
+    def test_check_match_end_single_player_out_of_balloons(self):
+        game = HanginWithFriendsGame()
+        p = game.add_player("Solo", MockUser("Solo"))
+        p.balloons_remaining = 0
+        game.participant_ids = [p.id]
+        assert game._check_match_end() is True
+        assert game.status == "finished"
+
+    def test_check_match_end_all_players_out_of_balloons(self):
+        game = HanginWithFriendsGame()
+        p1 = game.add_player("A", MockUser("A"))
+        p2 = game.add_player("B", MockUser("B"))
+        p1.balloons_remaining = 0
+        p2.balloons_remaining = 0
+        p1.score = 5
+        p2.score = 1
+        game.participant_ids = [p1.id, p2.id]
+        assert game._check_match_end() is True
+        assert game.status == "finished"
 
     def test_spectator_board_broadcast_skips_spectator_participants(self, monkeypatch):
         game = HanginWithFriendsGame()
@@ -644,6 +783,39 @@ class TestHanginCoverageEdges:
         remaining_bot_ids = {p.id for p in game.players if p.is_bot}
         assert all(bot_id in remaining_bot_ids for bot_id in game.bot_difficulties)
 
+    def test_start_solo_round_fallback_word_when_no_candidates(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        player = game.add_player("Solo", MockUser("Solo"))
+        game.round = 1
+        game.options.min_word_length = 3
+        game.options.max_word_length = 8
+        monkeypatch.setattr(game, "_generate_rack", lambda _round: [])
+        monkeypatch.setattr(game, "_spin_wheel", lambda _guesser: None)
+        game._start_solo_round(player)
+        assert game.secret_word == "aaa"
+        assert game.phase == "guessing"
+
+    def test_start_solo_round_bot_triggers_jolt(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        bot = Bot("SoloBot")
+        player = game.add_player("SoloBot", bot)
+        game.round = 1
+        game._dictionary_words = ("cat",)
+        game._dictionary_loaded = True
+        monkeypatch.setattr(game, "_generate_rack", lambda _round: list("catzzzzzzz"))
+        monkeypatch.setattr(game, "_spin_wheel", lambda _guesser: None)
+        calls = {"count": 0}
+
+        def fake_jolt(_player, ticks):
+            calls["count"] += 1
+            assert ticks >= 6
+
+        monkeypatch.setattr(
+            "server.games.hangin_with_friends.game.BotHelper.jolt_bot", fake_jolt
+        )
+        game._start_solo_round(player)
+        assert calls["count"] == 1
+
     def test_score_bucket_right_fill_branch(self, monkeypatch):
         game = HanginWithFriendsGame()
 
@@ -655,6 +827,242 @@ class TestHanginCoverageEdges:
         monkeypatch.setattr("server.games.hangin_with_friends.game.math.ceil", fake_ceil)
         buckets = game._build_score_buckets(["solo"])
         assert all(bucket for bucket in buckets)
+
+    def test_modifier_chances_lookup(self):
+        game = HanginWithFriendsGame()
+        row = game._modifier_chances_for_length(6)
+        assert "double_letter" in row
+        assert "triple_letter" in row
+        assert "double_word" in row
+        assert "triple_word" in row
+        nearest = game._modifier_chances_for_length(99)
+        assert set(nearest.keys()) == set(row.keys())
+
+    def test_modifier_chances_default_when_empty(self):
+        game = HanginWithFriendsGame()
+        game._modifier_chances_by_length = {}
+        row = game._modifier_chances_for_length(7)
+        assert row["double_letter"] == 10.67
+        assert row["triple_letter"] == 7.56
+        assert row["double_word"] == 5.33
+        assert row["triple_word"] == 3.56
+
+    def test_word_matching_helpers(self):
+        game = HanginWithFriendsGame()
+        words = ["planet", "planer", "placer", "plated", "kitten"]
+        row = "pla_e_"
+        tried = {"p", "l", "a", "e", "x", "z"}
+        strikes = game._get_strike_letters(row=row, tried_letters=tried)
+        assert strikes == {"x", "z"}
+        matches = game._get_words_matching_row(words=words, row=row, tried_letters=tried)
+        assert "planet" in matches
+        assert "planer" in matches
+        assert "placer" in matches
+        assert "plated" in matches
+        assert "kitten" not in matches
+
+    def test_letter_frequency_and_difficulty_picks(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        game.masked_word = "pla_e_"
+        game.guessed_letters = ["p", "l", "a", "e", "x"]
+        candidates = ["planet", "planer", "placer", "plated"]
+        freqs = game._get_letter_frequencies(
+            words=candidates,
+            row=game.masked_word,
+            tried_letters=set(game.guessed_letters),
+        )
+        assert freqs.get("r", 0) >= 1
+        assert "x" not in freqs
+        hard_pick = game._best_pick_letter_elimination(candidates)
+        extreme_pick = game._best_pick_letter_entropy(candidates)
+        assert hard_pick is not None
+        assert extreme_pick is not None
+
+        monkeypatch.setattr("server.games.hangin_with_friends.game.random.choice", lambda seq: seq[0])
+        assert game._easy_pick_letter() not in set(game.guessed_letters)
+
+    def test_bot_think_difficulty_branches(self):
+        game = HanginWithFriendsGame()
+        p1 = game.add_player("H", MockUser("H"))
+        p2 = game.add_player("Bot1", Bot("Bot1"))
+        game.host = "H"
+        game.status = "waiting"
+        game.on_start()
+        game.phase = "guessing"
+        game.guesser_id = p2.id
+        game.masked_word = "pla_e_"
+        game.secret_word = "planet"
+        game.guessed_letters = ["p", "l", "a", "e"]
+        game._dictionary_words = ("planet", "planer", "placer", "plated")
+
+        game.bot_difficulties[p2.id] = "easy"
+        assert game.bot_think(p2).startswith("guess_letter_")
+        game.bot_difficulties[p2.id] = "hard"
+        assert game.bot_think(p2).startswith("guess_letter_")
+        game.bot_difficulties[p2.id] = "extreme"
+        assert game.bot_think(p2).startswith("guess_letter_")
+
+    def test_pick_helper_edge_returns(self):
+        game = HanginWithFriendsGame()
+        game.guessed_letters = list("abcdefghijklmnopqrstuvwxyz")
+        assert game._easy_pick_letter() is None
+        assert game._best_pick_letter_elimination([]) is None
+        game.masked_word = "abc"
+        assert game._best_pick_letter_elimination(["abc"]) is None
+        assert game._best_pick_letter_entropy([]) is None
+
+        class TruthyZeroLen(list):
+            def __bool__(self):
+                return True
+
+            def __len__(self):
+                return 0
+
+        assert game._best_pick_letter_entropy(TruthyZeroLen()) is None
+
+    def test_debug_best_pick_snapshot(self):
+        game = HanginWithFriendsGame()
+        game.secret_word = "planet"
+        game.masked_word = "pla_e_"
+        game.guessed_letters = ["p", "l", "a", "e"]
+        game._dictionary_words = ("planet", "planer", "placer", "plated")
+        snap = game._debug_best_pick()
+        assert snap["candidate_count"] >= 1
+        assert "easy" in snap
+        assert "medium" in snap
+        assert "hard" in snap
+        assert "extreme" in snap
+
+    def test_read_words_from_gzip(self, tmp_path):
+        game = HanginWithFriendsGame()
+        gz_path = tmp_path / "mini.txt.gz"
+        import gzip
+
+        with gzip.open(gz_path, "wt", encoding="utf-8") as fp:
+            fp.write("ab\nabc\nplanet\nhello1\n")
+        game.options.min_word_length = 3
+        game.options.max_word_length = 8
+        loaded = game._read_words(gz_path)
+        assert "abc" in loaded
+        assert "planet" in loaded
+        assert "ab" not in loaded
+
+    def test_load_modifier_chances_error_paths(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        game._modifier_chances_by_length = {}
+
+        class FakePath:
+            def __init__(self, exists_val=True, text="{}"):
+                self._exists = exists_val
+                self._text = text
+
+            def with_name(self, _name):
+                return self
+
+            def exists(self):
+                return self._exists
+
+            def read_text(self, encoding="utf-8"):
+                return self._text
+
+        monkeypatch.setattr("server.games.hangin_with_friends.game.Path", lambda *_a, **_k: FakePath(exists_val=False))
+        game._load_modifier_chances()
+
+        monkeypatch.setattr("server.games.hangin_with_friends.game.Path", lambda *_a, **_k: FakePath(exists_val=True, text="{bad"))
+        game._load_modifier_chances()
+
+        payload = '{"bad":{"double_letter":5},"-1":{"double_letter":2},"5":"x","6":{"double_letter":"oops","triple_letter":7.56,"double_word":5.33,"triple_word":3.56}}'
+        monkeypatch.setattr("server.games.hangin_with_friends.game.Path", lambda *_a, **_k: FakePath(exists_val=True, text=payload))
+        game._load_modifier_chances()
+        assert game._modifier_chances_by_length[6]["double_letter"] == 0.0
+
+    def test_board_modifier_word_scoring(self):
+        game = HanginWithFriendsGame()
+        game.board_modifiers = {
+            1: "double_letter",
+            2: "triple_letter",
+            3: "double_word",
+            5: "triple_word",
+        }
+        # apple base: 1+3+3+1+1=9
+        # DL@1 => +1, TL@2 => +6 extra -> subtotal 16
+        # DW@3 and TW@5 => *6 => 96
+        assert game._score_word_with_board_modifiers("apple") == 96
+        assert game._score_word_with_board_modifiers("") == 1
+
+    def test_resolve_round_uses_board_modifiers_for_points(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        a = game.add_player("A", MockUser("A"))
+        b = game.add_player("B", MockUser("B"))
+        game.participant_ids = [a.id, b.id]
+        game.setter_id = a.id
+        game.guesser_id = b.id
+        game.secret_word = "cat"
+        game.masked_word = "cat"
+        game.phase = "guessing"
+        game.round_points_multiplier = 2
+        game.board_modifiers = {
+            1: "double_letter",
+            2: "double_word",
+        }
+        # cat: c3+a1+t1 with DL@1 => 8, DW@2 => 16, round x2 => 32
+        monkeypatch.setattr(game, "_check_match_end", lambda: False)
+        monkeypatch.setattr(game, "_start_round", lambda: None)
+        game._resolve_round(guesser_solved=True)
+        assert b.score == 32
+
+    def test_load_dictionary_missing_paths_and_read_words_cap(self, monkeypatch):
+        game = HanginWithFriendsGame()
+        game._dictionary_loaded = False
+        game.options.word_list = "words"
+        monkeypatch.setattr(
+            "server.games.hangin_with_friends.game.WORD_LIST_FILES",
+            {"words": "missing.txt.gz", "american-english-huge": "missing2.txt.gz"},
+        )
+        game._load_dictionary()
+        assert game._dictionary_loaded is True
+        assert len(game._dictionary_words) > 0
+
+        class FakeFP:
+            def __enter__(self):
+                self.i = 0
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self.i >= 250001:
+                    raise StopIteration
+                self.i += 1
+                n = self.i
+                chars = []
+                while n > 0:
+                    n, rem = divmod(n - 1, 26)
+                    chars.append(chr(ord("a") + rem))
+                return "".join(reversed(chars)) + "\n"
+
+        class FakePath:
+            suffix = ".txt"
+
+            def open(self, mode="rt", encoding="utf-8", errors="ignore"):
+                return FakeFP()
+
+        game.options.min_word_length = 1
+        game.options.max_word_length = 20
+        loaded = game._read_words(FakePath())
+        assert len(loaded) == 250000
+
+    def test_check_level_up_no_change_branch(self):
+        game = HanginWithFriendsGame()
+        p = game.add_player("P", MockUser("P"))
+        p.level = 3
+        p.score = 10
+        game._check_level_up(p)
+        assert p.level == 3
 
     def test_finish_with_winner_and_format_screen(self):
         game = HanginWithFriendsGame()

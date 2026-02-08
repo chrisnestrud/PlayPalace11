@@ -2,7 +2,6 @@
 
 game-name-hangin_with_friends = Hangin' with Friends
 hwf-prompt-enter-word = Enter a word using your rack:
-hwf-prompt-guess-word = Enter your full-word guess:
 
 # Options
 hwf-set-starting-balloons = Starting balloons: { $count }
@@ -21,9 +20,13 @@ hwf-set-max-word-length = Max word length: { $count }
 hwf-enter-max-word-length = Enter maximum word length:
 hwf-option-changed-max-word-length = Maximum word length changed to { $count }.
 
-hwf-set-base-wrong-guesses = Base wrong guesses: { $count }
-hwf-enter-base-wrong-guesses = Enter base wrong guesses:
-hwf-option-changed-base-wrong-guesses = Base wrong guesses changed to { $count }.
+hwf-set-base-wrong-guesses = Wrong-guess bonus: { $count }
+hwf-enter-base-wrong-guesses = Enter wrong-guess bonus (added to word length):
+hwf-option-changed-base-wrong-guesses = Wrong-guess bonus changed to { $count }.
+
+hwf-set-word-list = Word list: { $mode }
+hwf-select-word-list = Select word list:
+hwf-option-changed-word-list = Word list changed to { $mode }.
 
 hwf-set-max-rounds = Max rounds: { $count }
 hwf-enter-max-rounds = Enter max rounds (0 for no limit):
@@ -40,9 +43,6 @@ hwf-option-changed-default-bot-difficulty = Default bot difficulty changed to { 
 hwf-set-dictionary-mode = Dictionary mode: { $mode }
 hwf-select-dictionary-mode = Select dictionary mode:
 hwf-option-changed-dictionary-mode = Dictionary mode changed to { $mode }.
-
-hwf-toggle-full-word-guess = Full-word guess: { $enabled }
-hwf-option-changed-full-word-guess = Full-word guess changed to { $enabled }.
 
 hwf-toggle-spectators-see-all-actions = Spectators see all actions: { $enabled }
 hwf-option-changed-spectators-see-all-actions = Spectators see all actions changed to { $enabled }.
@@ -64,6 +64,9 @@ hwf-dictionary-mode-off = Off
 hwf-bot-guess-safe = Safe
 hwf-bot-guess-balanced = Balanced
 hwf-bot-guess-risky = Risky
+
+hwf-word-list-words = Common words
+hwf-word-list-american-english-huge = American English huge
 
 # Per-bot control
 hwf-set-bot-difficulty = Set bot difficulty
