@@ -64,6 +64,13 @@ SERVER_TO_CLIENT_SAMPLES = [
         "show_message": True,
         "return_to_login": True,
     },
+    {
+        "type": "server_status",
+        "mode": "maintenance",
+        "retry_after": 30,
+        "message": "Applying updates",
+        "resume_at": "2026-02-07T18:00:00Z",
+    },
     {"type": "table_create", "host": "Alice", "game": "Poker"},
     {"type": "update_options_lists", "games": [{"type": "poker", "name": "Poker"}]},
     {"type": "pong"},

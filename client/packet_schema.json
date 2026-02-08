@@ -1342,6 +1342,61 @@
         "title": "RequestInputPacket",
         "type": "object"
       },
+      "ServerStatusPacket": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "mode": {
+            "enum": [
+              "initializing",
+              "maintenance",
+              "running"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "resume_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resume At"
+          },
+          "retry_after": {
+            "minimum": 1,
+            "title": "Retry After",
+            "type": "integer"
+          },
+          "type": {
+            "const": "server_status",
+            "default": "server_status",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "retry_after"
+        ],
+        "title": "ServerStatusPacket",
+        "type": "object"
+      },
       "SpeakPacket": {
         "additionalProperties": false,
         "properties": {
@@ -1513,6 +1568,7 @@
         "pong": "#/$defs/PongPacket",
         "remove_playlist": "#/$defs/RemovePlaylistPacket",
         "request_input": "#/$defs/RequestInputPacket",
+        "server_status": "#/$defs/ServerStatusPacket",
         "speak": "#/$defs/SpeakPacket",
         "start_playlist": "#/$defs/StartPlaylistPacket",
         "stop_ambience": "#/$defs/StopAmbiencePacket",
@@ -1555,6 +1611,9 @@
       },
       {
         "$ref": "#/$defs/DisconnectPacket"
+      },
+      {
+        "$ref": "#/$defs/ServerStatusPacket"
       },
       {
         "$ref": "#/$defs/TableCreatePacket"

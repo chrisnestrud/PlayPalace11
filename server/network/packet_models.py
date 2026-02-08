@@ -262,6 +262,14 @@ class DisconnectPacket(BasePacket):
     return_to_login: bool = False
 
 
+class ServerStatusPacket(BasePacket):
+    type: Literal["server_status"] = "server_status"
+    mode: Literal["initializing", "maintenance", "running"]
+    retry_after: Annotated[int, Field(ge=1)]
+    message: str | None = None
+    resume_at: str | None = None
+
+
 class TableCreatePacket(BasePacket):
     type: Literal["table_create"] = "table_create"
     host: str
@@ -356,6 +364,7 @@ ServerToClientPacket = Annotated[
         RequestInputPacket,
         ClearUIPacket,
         DisconnectPacket,
+        ServerStatusPacket,
         TableCreatePacket,
         UpdateOptionsListsPacket,
         PongPacket,
