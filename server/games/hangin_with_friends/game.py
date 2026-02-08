@@ -662,6 +662,24 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             profile = "normal"
         return PACING_TICKS[profile].get(key, 0)
 
+    def _cancel_board_readout_audio(self) -> None:
+        self.scheduled_sounds = [
+            sound_event
+            for sound_event in self.scheduled_sounds
+            if len(sound_event) < 2 or sound_event[1] != SOUNDS["click2"]
+        ]
+
+    def _clear_round_timeline(self) -> None:
+        self.cancel_timeline("hwf-board-readout")
+        self.cancel_timeline("hwf-round-flow")
+        self._cancel_board_readout_audio()
+
+    def _jolt_bot_after_action(self, player: Player) -> None:
+        if not player.is_bot:
+            return
+        pause_ticks = max(2, self._pacing_ticks("guess_result_pause"))
+        BotHelper.jolt_bot(player, ticks=pause_ticks)
+
     def prestart_validate(self) -> list[str]:
         errors = super().prestart_validate()
         if self.options.min_word_length > self.options.max_word_length:
@@ -684,6 +702,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         if self._check_match_end():
             return
 
+        self._clear_round_timeline()
         self.round += 1
         players = self._get_round_eligible_players()
         if len(players) < 1:
@@ -741,6 +760,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.rebuild_all_menus()
 
     def _start_solo_round(self, player: HanginWithFriendsPlayer) -> None:
+        self._clear_round_timeline()
         self.setter_id = player.id
         self.guesser_id = player.id
         self.tile_rack = self._generate_rack(self.round)
@@ -922,6 +942,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["menu_close"])
         self._spin_wheel(guesser)
 
+        self._clear_round_timeline()
         self.phase = "guessing"
         self.current_player = guesser
         self.schedule_timeline_speech(
@@ -970,6 +991,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["lifeline_bounce"])
         self.broadcast(f"{player.name} removed one strike with a lifeline.")
         self._announce_guess_state(delay_ticks=self._pacing_ticks("guess_result_pause"))
+        self._jolt_bot_after_action(player)
         self.rebuild_all_menus()
 
     def _action_lifeline_retry(self, player: Player, action_id: str) -> None:
@@ -982,6 +1004,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["use_lifeline"])
         self.play_sound(SOUNDS["lifeline_bounce"])
         self.broadcast(f"{player.name} activated retry shield lifeline.")
+        self._jolt_bot_after_action(player)
         self.rebuild_all_menus()
 
     def _action_set_bot_difficulty(self, player: Player, value: str, action_id: str) -> None:
@@ -1082,6 +1105,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 return
 
         self._announce_guess_state(delay_ticks=self._pacing_ticks("guess_result_pause"))
+        self._jolt_bot_after_action(guesser)
         self.rebuild_all_menus()
 
     def _apply_wrong_guess(self, guesser: HanginWithFriendsPlayer) -> None:
@@ -1105,6 +1129,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         if not isinstance(setter, HanginWithFriendsPlayer) or not isinstance(guesser, HanginWithFriendsPlayer):
             return
 
+        self._clear_round_timeline()
         self.phase = "round_end"
         word_points = self._score_word_with_board_modifiers(self.secret_word)
         points = word_points * self.round_points_multiplier
@@ -1267,6 +1292,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             self.broadcast(f"{p.name} is eliminated and now spectating.")
 
     def _finish_with_winner(self, winner: HanginWithFriendsPlayer, message: str) -> None:
+        self._clear_round_timeline()
         self.phase = "game_end"
         self.broadcast(message)
         for p in self.get_active_players():

@@ -399,6 +399,74 @@ class TestHanginPacingProfiles:
         game.on_tick()
         assert game.phase in {"choose_word", "guessing"}
 
+    def test_slow_profile_cancels_stale_board_readout_after_round_end(self):
+        game = HanginWithFriendsGame()
+        u1 = MockUser("Alice")
+        u2 = MockUser("Bob")
+        p1 = game.add_player("Alice", u1)
+        p2 = game.add_player("Bob", u2)
+        game.options.pacing_profile = "slow"
+        game.on_start()
+        game.phase = "choose_word"
+        game.setter_id = p1.id
+        game.guesser_id = p2.id
+        game.current_player = p1
+        game.tile_rack = list("planetzzzzzz")
+        game.execute_action(p1, "choose_word", "planet")
+        game.execute_action(p2, "guess_letter_p")
+        game.execute_action(p2, "guess_letter_l")
+        game.execute_action(p2, "guess_letter_a")
+        game.execute_action(p2, "guess_letter_n")
+        game.execute_action(p2, "guess_letter_t")
+        assert game.phase == "round_end"
+
+        before = len(u1.get_spoken_messages())
+        pause = PACING_TICKS["slow"]["round_end_pause"]
+        for _ in range(pause - 1):
+            game.on_tick()
+
+        new_messages = u1.get_spoken_messages()[before:]
+        board_token_messages = [
+            msg
+            for msg in new_messages
+            if msg == "blank" or msg.startswith("blank ") or (len(msg) <= 3 and msg.isalpha())
+        ]
+        assert board_token_messages == []
+        assert not any(msg.startswith("Word selected.") for msg in new_messages)
+
+    def test_slow_profile_bot_guess_results_are_spaced(self):
+        class CaptureBot(MockUser):
+            @property
+            def is_bot(self):
+                return True
+
+        random.seed(4321)
+        game = HanginWithFriendsGame(options=HanginWithFriendsOptions(starting_balloons=3))
+        game.options.pacing_profile = "slow"
+        b1 = CaptureBot("Bot1")
+        b2 = CaptureBot("Bot2")
+        game.add_player("Bot1", b1)
+        game.add_player("Bot2", b2)
+        game.on_start()
+
+        seen = 0
+        result_ticks: list[int] = []
+        for tick in range(500):
+            game.on_tick()
+            spoken = b1.get_spoken_messages()
+            for msg in spoken[seen:]:
+                if msg.startswith("Correct.") or msg.startswith("Wrong."):
+                    result_ticks.append(tick)
+            seen = len(spoken)
+            if len(result_ticks) >= 4:
+                break
+            if not game.game_active:
+                break
+
+        assert len(result_ticks) >= 2
+        gaps = [b - a for a, b in zip(result_ticks, result_ticks[1:])]
+        assert min(gaps) >= PACING_TICKS["slow"]["guess_result_pause"]
+
 
 class TestHanginWithFriendsPlay:
     """Play test with bots and persistence reload."""
