@@ -1,10 +1,10 @@
 """Client Options Profile dialog for Play Palace v9 client."""
 
 import wx
-from . import uisound
+from .enhance_wx import audio_events
 
 
-class ClientOptionsDialog(wx.Dialog, uisound.SoundBindingsMixin):
+class ClientOptionsDialog(wx.Dialog, audio_events.SoundBindingsMixin):
     """Dialog for managing client-side options (audio, social, etc.)."""
 
     def __init__(

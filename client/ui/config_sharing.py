@@ -201,7 +201,7 @@ def format_export_timestamp(timestamp: int) -> str:
 # ========== Dialogs ==========
 
 import wx
-from . import uisound
+from .enhance_wx import audio_events
 from config_manager import ConfigManager
 
 
@@ -258,7 +258,7 @@ class AccountConflictDialog(wx.Dialog):
         return self.result
 
 
-class ConfigSharingDialog(wx.Dialog, uisound.SoundBindingsMixin):
+class ConfigSharingDialog(wx.Dialog, audio_events.SoundBindingsMixin):
     """Dialog for importing or exporting server profiles."""
 
     MODE_EXPORT = "export"

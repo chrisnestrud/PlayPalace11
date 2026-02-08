@@ -1,4 +1,6 @@
-# Custom utility from Zarvox, allowing for playing sounds for ui events with seemless integration.
+"""
+This helper module allows for playing sounds for ui events with little setup.
+"""
 
 import wx
 import wx.adv
