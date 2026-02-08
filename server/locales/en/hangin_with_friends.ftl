@@ -51,6 +51,10 @@ hwf-set-bot-guess-aggression = Bot guess aggression: { $mode }
 hwf-select-bot-guess-aggression = Select bot guess aggression:
 hwf-option-changed-bot-guess-aggression = Bot guess aggression changed to { $mode }.
 
+hwf-set-pacing-profile = Pacing profile: { $mode }
+hwf-select-pacing-profile = Select pacing profile:
+hwf-option-changed-pacing-profile = Pacing profile changed to { $mode }.
+
 # Choices
 hwf-bot-difficulty-easy = Easy
 hwf-bot-difficulty-medium = Medium
@@ -64,6 +68,10 @@ hwf-dictionary-mode-off = Off
 hwf-bot-guess-safe = Safe
 hwf-bot-guess-balanced = Balanced
 hwf-bot-guess-risky = Risky
+
+hwf-pacing-fast = Fast
+hwf-pacing-normal = Normal
+hwf-pacing-slow = Slow
 
 hwf-word-list-words = Common words
 hwf-word-list-american-english-huge = American English huge

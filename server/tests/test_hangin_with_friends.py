@@ -6,6 +6,7 @@ from pathlib import Path
 
 from server.games.hangin_with_friends.game import (
     BOT_DIFFICULTY_CHOICES,
+    PACING_TICKS,
     WHEEL_OUTCOMES,
     HanginWithFriendsGame,
     HanginWithFriendsOptions,
@@ -38,6 +39,7 @@ class TestHanginWithFriendsUnit:
         assert game.options.max_score == 0
         assert game.options.spectators_see_all_actions is True
         assert game.options.word_list == "words"
+        assert game.options.pacing_profile == "normal"
 
     def test_serialization(self):
         game = HanginWithFriendsGame()
@@ -263,6 +265,8 @@ class TestHanginSpectatorVisibility:
         game, p1, p2, spectator = self._setup_game(True)
         game.execute_action(p1, "choose_word", "planet")
         game.execute_action(p2, "guess_letter_p")
+        for _ in range(80):
+            game.on_tick()
         spoken = spectator.get_spoken_messages()
         assert any(msg.startswith("Secret word chosen by Alice: PLANET") for msg in spoken)
         assert any(msg.startswith("Alice board:") for msg in spoken)
@@ -273,6 +277,8 @@ class TestHanginSpectatorVisibility:
         game, p1, p2, spectator = self._setup_game(False)
         game.execute_action(p1, "choose_word", "planet")
         game.execute_action(p2, "guess_letter_p")
+        for _ in range(80):
+            game.on_tick()
         spoken = spectator.get_spoken_messages()
         assert not any(msg.startswith("Secret word chosen by Alice: PLANET") for msg in spoken)
         assert not any(msg.startswith("Alice board:") for msg in spoken)
@@ -296,6 +302,11 @@ class TestHanginTimelineSync:
         round_line = "Round 1. Alice is choosing a word, Bob will guess."
         assert round_line not in u1.get_spoken_messages()
         assert round_line not in us.get_spoken_messages()
+
+        for _ in range(PACING_TICKS["normal"]["turn_transition"]):
+            game.on_tick()
+            assert round_line not in u1.get_spoken_messages()
+            assert round_line not in us.get_spoken_messages()
 
         game.on_tick()
         assert round_line in u1.get_spoken_messages()
@@ -325,10 +336,68 @@ class TestHanginTimelineSync:
         assert selected_line not in u2.get_spoken_messages()
         assert selected_line not in us.get_spoken_messages()
 
+        for _ in range(PACING_TICKS["normal"]["turn_transition"]):
+            game.on_tick()
+            assert selected_line not in u2.get_spoken_messages()
+            assert selected_line not in us.get_spoken_messages()
+
         game.on_tick()
         assert selected_line in u1.get_spoken_messages()
         assert selected_line in u2.get_spoken_messages()
         assert selected_line in us.get_spoken_messages()
+
+
+class TestHanginPacingProfiles:
+    """Pacing profile behavior and delayed round transitions."""
+
+    def test_round_intro_delay_respects_profile(self):
+        for profile in ("fast", "normal", "slow"):
+            game = HanginWithFriendsGame()
+            u1 = MockUser("Alice")
+            u2 = MockUser("Bob")
+            game.add_player("Alice", u1)
+            game.add_player("Bob", u2)
+            game.options.pacing_profile = profile
+            game.on_start()
+
+            round_line = "Round 1. Alice is choosing a word, Bob will guess."
+            delay = PACING_TICKS[profile]["turn_transition"]
+            for _ in range(delay):
+                game.on_tick()
+                assert round_line not in u1.get_spoken_messages()
+
+            game.on_tick()
+            assert round_line in u1.get_spoken_messages()
+
+    def test_round_end_waits_before_starting_next_round(self):
+        game = HanginWithFriendsGame()
+        u1 = MockUser("Alice")
+        u2 = MockUser("Bob")
+        p1 = game.add_player("Alice", u1)
+        p2 = game.add_player("Bob", u2)
+        game.options.pacing_profile = "slow"
+        game.on_start()
+        game.phase = "choose_word"
+        game.setter_id = p1.id
+        game.guesser_id = p2.id
+        game.current_player = p1
+        game.tile_rack = list("planetzzzzzz")
+        game.execute_action(p1, "choose_word", "planet")
+        game.execute_action(p2, "guess_letter_p")
+        game.execute_action(p2, "guess_letter_l")
+        game.execute_action(p2, "guess_letter_a")
+        game.execute_action(p2, "guess_letter_n")
+        game.execute_action(p2, "guess_letter_t")
+
+        pause = PACING_TICKS["slow"]["round_end_pause"]
+        assert game.phase == "round_end"
+        assert game.round_resume_tick == game.sound_scheduler_tick + pause
+        for _ in range(pause - 1):
+            game.on_tick()
+            assert game.phase == "round_end"
+
+        game.on_tick()
+        assert game.phase in {"choose_word", "guessing"}
 
 
 class TestHanginWithFriendsPlay:

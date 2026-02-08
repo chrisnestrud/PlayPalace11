@@ -186,6 +186,12 @@ BOT_GUESS_AGGRESSION_LABELS = {
     "balanced": "hwf-bot-guess-balanced",
     "risky": "hwf-bot-guess-risky",
 }
+PACING_PROFILE_CHOICES = ["fast", "normal", "slow"]
+PACING_PROFILE_LABELS = {
+    "fast": "hwf-pacing-fast",
+    "normal": "hwf-pacing-normal",
+    "slow": "hwf-pacing-slow",
+}
 
 WORD_LIST_CHOICES = ["words", "american-english-huge"]
 WORD_LIST_LABELS = {
@@ -270,7 +276,29 @@ MODIFIER_LABELS = {
     "double_word": "double word",
     "triple_word": "triple word",
 }
-BOARD_READ_STEP_TICKS = 6
+PACING_TICKS = {
+    "fast": {
+        "turn_transition": 8,
+        "board_token_step": 5,
+        "post_board_pause": 6,
+        "guess_result_pause": 4,
+        "round_end_pause": 10,
+    },
+    "normal": {
+        "turn_transition": 10,
+        "board_token_step": 6,
+        "post_board_pause": 8,
+        "guess_result_pause": 6,
+        "round_end_pause": 12,
+    },
+    "slow": {
+        "turn_transition": 13,
+        "board_token_step": 8,
+        "post_board_pause": 10,
+        "guess_result_pause": 8,
+        "round_end_pause": 16,
+    },
+}
 
 
 @dataclass
@@ -422,6 +450,17 @@ class HanginWithFriendsOptions(GameOptions):
             choice_labels=BOT_GUESS_AGGRESSION_LABELS,
         )
     )
+    pacing_profile: str = option_field(
+        MenuOption(
+            default="normal",
+            choices=PACING_PROFILE_CHOICES,
+            value_key="mode",
+            label="hwf-set-pacing-profile",
+            prompt="hwf-select-pacing-profile",
+            change_msg="hwf-option-changed-pacing-profile",
+            choice_labels=PACING_PROFILE_LABELS,
+        )
+    )
 
 
 @dataclass
@@ -448,6 +487,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     lava_next_tick: int = 0
     participant_ids: list[str] = field(default_factory=list)
     board_modifiers: dict[int, str] = field(default_factory=dict)
+    round_resume_tick: int = 0
 
     def __post_init__(self):
         super().__post_init__()
@@ -578,6 +618,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.game_active = True
         self.round = 0
         self.phase = "lobby"
+        self.round_resume_tick = 0
 
         active_players = self.get_active_players()
         self.participant_ids = [p.id for p in active_players]
@@ -610,7 +651,16 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         super().on_tick()
         self.process_scheduled_sounds()
         self._maybe_play_lava_ambience()
+        if self.round_resume_tick > 0 and self.sound_scheduler_tick >= self.round_resume_tick and self.phase == "round_end":
+            self.round_resume_tick = 0
+            self._start_round()
         BotHelper.on_tick(self)
+
+    def _pacing_ticks(self, key: str) -> int:
+        profile = self.options.pacing_profile
+        if profile not in PACING_TICKS:
+            profile = "normal"
+        return PACING_TICKS[profile].get(key, 0)
 
     def prestart_validate(self) -> list[str]:
         errors = super().prestart_validate()
@@ -669,17 +719,18 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self._schedule_round_intro(
             f"Round {self.round}. {setter.name} is choosing a word, {guesser.name} will guess."
         )
+        rack_delay = self._pacing_ticks("turn_transition") + self._pacing_ticks("post_board_pause")
         rack_text = f"Your rack is: {' '.join(l.upper() for l in self.tile_rack)}"
         self.schedule_timeline_speech(
             rack_text,
-            delay_ticks=BOARD_READ_STEP_TICKS,
+            delay_ticks=rack_delay,
             buffer="table",
             player_ids=[setter.id],
             tag="hwf-round-flow",
         )
         self._broadcast_private_to_spectators(
             f"Setter rack ({setter.name}): {' '.join(l.upper() for l in self.tile_rack)}",
-            delay_ticks=BOARD_READ_STEP_TICKS,
+            delay_ticks=rack_delay,
             tag="hwf-round-flow",
         )
         self._broadcast_spectator_player_boards()
@@ -722,10 +773,14 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         )
         self.broadcast(self._format_board_modifiers_summary())
         self._spin_wheel(player)
-        self.broadcast(
-            f"Word selected. The word has {len(self.secret_word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}."
+        self.schedule_timeline_speech(
+            f"Word selected. The word has {len(self.secret_word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}.",
+            delay_ticks=self._pacing_ticks("turn_transition"),
+            buffer="table",
+            include_spectators=True,
+            tag="hwf-round-flow",
         )
-        self._announce_guess_state()
+        self._announce_guess_state(delay_ticks=self._pacing_ticks("turn_transition"))
 
         if player.is_bot:
             BotHelper.jolt_bot(player, ticks=random.randint(6, 12))
@@ -871,14 +926,14 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.current_player = guesser
         self.schedule_timeline_speech(
             f"Word selected. The word has {len(word)} letters. Wrong guesses allowed: {self.max_wrong_guesses}.",
-            delay_ticks=0,
+            delay_ticks=self._pacing_ticks("turn_transition"),
             buffer="table",
             include_spectators=True,
             tag="hwf-round-flow",
         )
         self.broadcast(self._format_board_modifiers_summary())
         self._broadcast_private_to_spectators(f"Secret word chosen by {setter.name}: {self.secret_word.upper()}")
-        self._announce_guess_state()
+        self._announce_guess_state(delay_ticks=self._pacing_ticks("turn_transition"))
 
         if guesser.is_bot:
             BotHelper.jolt_bot(guesser, ticks=random.randint(6, 12))
@@ -914,7 +969,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["use_lifeline"])
         self.play_sound(SOUNDS["lifeline_bounce"])
         self.broadcast(f"{player.name} removed one strike with a lifeline.")
-        self._announce_guess_state()
+        self._announce_guess_state(delay_ticks=self._pacing_ticks("guess_result_pause"))
         self.rebuild_all_menus()
 
     def _action_lifeline_retry(self, player: Player, action_id: str) -> None:
@@ -1026,7 +1081,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 self._resolve_round(guesser_solved=False)
                 return
 
-        self._announce_guess_state()
+        self._announce_guess_state(delay_ticks=self._pacing_ticks("guess_result_pause"))
         self.rebuild_all_menus()
 
     def _apply_wrong_guess(self, guesser: HanginWithFriendsPlayer) -> None:
@@ -1076,7 +1131,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
         if self._check_match_end():
             return
-        self._start_round()
+        self.round_resume_tick = self.sound_scheduler_tick + self._pacing_ticks("round_end_pause")
 
     def _award_score(self, player: HanginWithFriendsPlayer, points: int) -> None:
         player.score += points
@@ -1095,12 +1150,19 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.play_sound(SOUNDS["popup"])
         self.broadcast(f"{player.name} reached level {player.level}.")
 
-    def _announce_guess_state(self) -> None:
-        self._schedule_board_readout()
+    def _announce_guess_state(self, *, delay_ticks: int = 0) -> None:
+        total_board_ticks = self._schedule_board_readout(delay_ticks=delay_ticks)
+        summary_delay = total_board_ticks + self._pacing_ticks("post_board_pause")
         masked = self._spoken_board()
         guessed = ", ".join(l.upper() for l in sorted(self.guessed_letters)) or "none"
-        self.broadcast(f"Board: {masked}. Guessed letters: {guessed}. Wrong {self.wrong_guesses}/{self.max_wrong_guesses}.")
-        self._broadcast_spectator_player_boards()
+        self.schedule_timeline_speech(
+            f"Board: {masked}. Guessed letters: {guessed}. Wrong {self.wrong_guesses}/{self.max_wrong_guesses}.",
+            delay_ticks=summary_delay,
+            buffer="table",
+            include_spectators=True,
+            tag="hwf-board-readout",
+        )
+        self._broadcast_spectator_player_boards(delay_ticks=summary_delay)
 
     def _announce_balloons(self) -> None:
         parts = [f"{p.name}: {p.balloons_remaining} balloons" for p in self._get_participant_players()]
@@ -1165,7 +1227,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 if user:
                     user.speak(text, "table")
 
-    def _broadcast_spectator_player_boards(self) -> None:
+    def _broadcast_spectator_player_boards(self, *, delay_ticks: int = 0) -> None:
         if not self.options.spectators_see_all_actions:
             return
         for participant in self._get_participant_players():
@@ -1174,7 +1236,9 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             self._broadcast_private_to_spectators(
                 f"{participant.name} board: score {participant.score}, balloons {participant.balloons_remaining}, "
                 f"coins {participant.coins}, reveal {participant.lifeline_reveal}, "
-                f"remove {participant.lifeline_remove}, retry {participant.lifeline_retry}."
+                f"remove {participant.lifeline_remove}, retry {participant.lifeline_retry}.",
+                delay_ticks=delay_ticks,
+                tag="hwf-board-readout",
             )
 
     def _get_participant_players(self) -> list[HanginWithFriendsPlayer]:
@@ -1567,11 +1631,12 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     def _spoken_board_tokens(self) -> list[str]:
         return [token.strip() for token in self._spoken_board().split(",")]
 
-    def _schedule_board_readout(self) -> None:
+    def _schedule_board_readout(self, *, delay_ticks: int = 0) -> int:
         self.cancel_timeline("hwf-board-readout")
         tokens = self._spoken_board_tokens()
+        board_token_step = self._pacing_ticks("board_token_step")
         for idx, token in enumerate(tokens):
-            delay = idx * BOARD_READ_STEP_TICKS
+            delay = delay_ticks + (idx * board_token_step)
             self.schedule_timeline_speech(
                 token,
                 delay_ticks=delay,
@@ -1580,12 +1645,15 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 tag="hwf-board-readout",
             )
             self.schedule_sound(SOUNDS["click2"], delay_ticks=delay, volume=35)
+        if not tokens:
+            return delay_ticks
+        return delay_ticks + ((len(tokens) - 1) * board_token_step)
 
     def _schedule_round_intro(self, text: str) -> None:
         self.cancel_timeline("hwf-round-flow")
         self.schedule_timeline_speech(
             text,
-            delay_ticks=0,
+            delay_ticks=self._pacing_ticks("turn_transition"),
             buffer="table",
             include_spectators=True,
             tag="hwf-round-flow",
