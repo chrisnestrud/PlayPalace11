@@ -17,6 +17,7 @@ from ..registry import register_game
 from ...game_utils.action_guard_mixin import ActionGuardMixin
 from ...game_utils.actions import Action, ActionSet, EditboxInput, MenuInput, Visibility
 from ...game_utils.bot_helper import BotHelper
+from ...game_utils.poker_timer import PokerTurnTimer
 from ...game_utils.game_result import GameResult, PlayerResult
 from ...game_utils.options import BoolOption, IntOption, MenuOption, option_field
 from ...messages.localization import Localization
@@ -197,6 +198,23 @@ WORD_LIST_CHOICES = ["words", "american-english-huge"]
 WORD_LIST_LABELS = {
     "words": "hwf-word-list-words",
     "american-english-huge": "hwf-word-list-american-english-huge",
+}
+
+PAIRING_STRATEGY_CHOICES = [
+    "winner_fair",
+    "round_robin",
+    "weighted_fair",
+    "winner_cap",
+    "host_queue",
+    "performance",
+]
+PAIRING_STRATEGY_LABELS = {
+    "winner_fair": "hwf-pairing-winner-fair",
+    "round_robin": "hwf-pairing-round-robin",
+    "weighted_fair": "hwf-pairing-weighted-fair",
+    "winner_cap": "hwf-pairing-winner-cap",
+    "host_queue": "hwf-pairing-host-queue",
+    "performance": "hwf-pairing-performance",
 }
 WORD_LIST_FILES = {
     "words": "words.txt.gz",
@@ -409,6 +427,28 @@ class HanginWithFriendsOptions(GameOptions):
             change_msg="hwf-option-changed-max-score",
         )
     )
+    round_timer_seconds: int = option_field(
+        IntOption(
+            default=0,
+            min_val=0,
+            max_val=600,
+            value_key="seconds",
+            label="hwf-set-round-timer",
+            prompt="hwf-enter-round-timer",
+            change_msg="hwf-option-changed-round-timer",
+        )
+    )
+    pairing_strategy: str = option_field(
+        MenuOption(
+            default="winner_fair",
+            choices=PAIRING_STRATEGY_CHOICES,
+            value_key="mode",
+            label="hwf-set-pairing-strategy",
+            prompt="hwf-select-pairing-strategy",
+            change_msg="hwf-option-changed-pairing-strategy",
+            choice_labels=PAIRING_STRATEGY_LABELS,
+        )
+    )
     default_bot_difficulty: str = option_field(
         MenuOption(
             default="medium",
@@ -490,6 +530,15 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     round_resume_tick: int = 0
     last_match_end_message: str = ""
     last_eliminated_names: list[str] = field(default_factory=list)
+    last_round_winner_id: str = ""
+    last_played_round: dict[str, int] = field(default_factory=dict)
+    has_played_ids: list[str] = field(default_factory=list)
+    round_robin_index: int = 0
+    host_queue_index: int = 0
+    winner_streak_id: str = ""
+    winner_streak_count: int = 0
+    timer: PokerTurnTimer = field(default_factory=PokerTurnTimer)
+    timer_warning_played: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -610,6 +659,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
     def create_standard_action_set(self, player: Player) -> ActionSet:
         action_set = super().create_standard_action_set(player)
+        user = self.get_user(player)
+        locale = user.locale if user else "en"
         local_actions = [
             Action(
                 id="read_board",
@@ -630,6 +681,13 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 label="Letters used",
                 handler="_action_read_letters_used",
                 is_enabled="_is_read_status_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
+            Action(
+                id="read_all_boards",
+                label="Read all boards",
+                handler="_action_read_all_boards",
+                is_enabled="_is_read_all_boards_enabled",
                 is_hidden="_is_read_status_hidden",
             ),
             Action(
@@ -674,6 +732,13 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 is_enabled="_is_read_rack_enabled",
                 is_hidden="_is_read_status_hidden",
             ),
+            Action(
+                id="check_turn_timer",
+                label=Localization.get(locale, "poker-check-turn-timer"),
+                handler="_action_check_turn_timer",
+                is_enabled="_is_check_turn_timer_enabled",
+                is_hidden="_is_read_status_hidden",
+            ),
         ]
         for action in reversed(local_actions):
             action_set.add(action)
@@ -691,12 +756,14 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.define_keybind("b", "Read board", ["read_board"], state=KeybindState.ACTIVE, include_spectators=True)
         self.define_keybind("a", "Letters available", ["read_letters_available"], state=KeybindState.ACTIVE, include_spectators=True)
         self.define_keybind("u", "Letters used", ["read_letters_used"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("shift+b", "Read all boards", ["read_all_boards"], state=KeybindState.ACTIVE, include_spectators=True)
         self.define_keybind("w", "Wheel outcome", ["read_wheel_outcome"], state=KeybindState.ACTIVE, include_spectators=True)
         self.define_keybind("p", "Current score", ["read_current_score"], state=KeybindState.ACTIVE, include_spectators=True)
         self.define_keybind("l", "Current balloons", ["read_current_balloons"], state=KeybindState.ACTIVE, include_spectators=True)
         self.define_keybind("r", "Round status", ["read_round_status"], state=KeybindState.ACTIVE, include_spectators=True)
         self.define_keybind("m", "Board modifiers", ["read_board_modifiers"], state=KeybindState.ACTIVE, include_spectators=True)
         self.define_keybind("k", "Rack letters", ["read_rack"], state=KeybindState.ACTIVE, include_spectators=True)
+        self.define_keybind("shift+t", "Turn timer", ["check_turn_timer"], state=KeybindState.ACTIVE, include_spectators=True)
 
     def on_start(self) -> None:
         self.status = "playing"
@@ -706,6 +773,15 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.round_resume_tick = 0
         self.last_match_end_message = ""
         self.last_eliminated_names = []
+        self.last_round_winner_id = ""
+        self.last_played_round = {}
+        self.has_played_ids = []
+        self.round_robin_index = 0
+        self.host_queue_index = 0
+        self.winner_streak_id = ""
+        self.winner_streak_count = 0
+        self.timer.clear()
+        self.timer_warning_played = False
 
         active_players = self.get_active_players()
         self.participant_ids = [p.id for p in active_players]
@@ -741,6 +817,9 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         if self.round_resume_tick > 0 and self.sound_scheduler_tick >= self.round_resume_tick and self.phase == "round_end":
             self.round_resume_tick = 0
             self._start_round()
+        if self.timer.tick():
+            self._handle_turn_timeout()
+        self._maybe_play_timer_warning()
         BotHelper.on_tick(self)
 
     def _pacing_ticks(self, key: str) -> int:
@@ -795,8 +874,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             self._start_solo_round(players[0])
             return
 
-        setter = players[(self.round - 1) % len(players)]
-        guesser = players[(self.round) % len(players)]
+        setter, guesser = self._select_round_pair(players)
 
         self.setter_id = setter.id
         self.guesser_id = guesser.id
@@ -810,20 +888,22 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.round_points_multiplier = 1
         setter.retry_shield_active = False
         guesser.retry_shield_active = False
+        self._mark_players_as_played(setter, guesser)
 
         self.phase = "choose_word"
         self.current_player = setter
 
-        self.play_sound(SOUNDS["menu_open"])
-        self.play_sound(SOUNDS["avatar"], volume=70)
-        self.play_sound(SOUNDS["shuffle"], volume=85)
         intro_text = f"Round {self.round}. {setter.name} is choosing a word, {guesser.name} will guess."
-        self._schedule_round_intro(intro_text)
-        self._broadcast_spectator_player_boards()
+        intro_delay = max(self._pacing_ticks("turn_transition"), 6)
+        self.schedule_sound(SOUNDS["menu_open"], delay_ticks=0)
+        self.schedule_sound(SOUNDS["avatar"], delay_ticks=2, volume=70)
+        self.schedule_sound(SOUNDS["shuffle"], delay_ticks=4, volume=85)
+        self._schedule_round_intro(intro_text, delay_ticks=intro_delay)
+        # Spectator boards are available via hotkeys instead of auto speech.
 
         BotHelper.jolt_bot_for_speech(
             setter,
-            delay_ticks=self._pacing_ticks("turn_transition"),
+            delay_ticks=intro_delay,
             speech_ticks=self.estimate_speech_ticks(intro_text),
             post_pause_ticks=self._pacing_ticks("post_board_pause"),
             min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
@@ -858,11 +938,11 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         self.phase = "guessing"
         self.current_player = player
 
-        self.play_sound(SOUNDS["menu_open"])
-        self.play_sound(SOUNDS["shuffle"], volume=85)
-        self._schedule_round_intro(
-            f"Round {self.round}. Solo mode: {player.name} is guessing."
-        )
+        intro_text = f"Round {self.round}. Solo mode: {player.name} is guessing."
+        intro_delay = max(self._pacing_ticks("turn_transition"), 6)
+        self.schedule_sound(SOUNDS["menu_open"], delay_ticks=0)
+        self.schedule_sound(SOUNDS["shuffle"], delay_ticks=2, volume=85)
+        self._schedule_round_intro(intro_text, delay_ticks=intro_delay)
         self._spin_wheel(player)
         selected_text = (
             f"Word selected. The word has {len(self.secret_word)} letters. "
@@ -878,6 +958,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         board_end_delay = self._announce_guess_state(
             delay_ticks=self._pacing_ticks("turn_transition")
         )
+        self._start_turn_timer()
 
         BotHelper.jolt_bot_for_speech(
             player,
@@ -887,6 +968,36 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
         )
         self.rebuild_all_menus()
+
+    def _select_round_pair(
+        self, eligible: list[HanginWithFriendsPlayer]
+    ) -> tuple[HanginWithFriendsPlayer, HanginWithFriendsPlayer]:
+        if len(eligible) == 1:
+            return (eligible[0], eligible[0])
+        host_player = next((p for p in eligible if p.name == self.host), None)
+        if self.round == 1:
+            setter = host_player if host_player else eligible[0]
+            guesser = self._pick_random_other(eligible, setter.id)
+            return (setter, guesser)
+        if len(eligible) == 2 and self.setter_id and self.guesser_id:
+            setter = self.get_player_by_id(self.guesser_id)
+            guesser = self.get_player_by_id(self.setter_id)
+            if isinstance(setter, HanginWithFriendsPlayer) and isinstance(guesser, HanginWithFriendsPlayer):
+                if setter in eligible and guesser in eligible:
+                    return (setter, guesser)
+
+        strategy = self.options.pairing_strategy
+        if strategy == "round_robin":
+            return self._pair_round_robin(eligible)
+        if strategy == "weighted_fair":
+            return self._pair_weighted_fair(eligible)
+        if strategy == "winner_cap":
+            return self._pair_winner_cap(eligible)
+        if strategy == "host_queue":
+            return self._pair_host_queue(eligible)
+        if strategy == "performance":
+            return self._pair_performance(eligible)
+        return self._pair_winner_fair(eligible)
 
     # action guards
     def _is_choose_word_enabled(self, player: Player) -> str | None:
@@ -931,6 +1042,20 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         if player.is_spectator and self.options.spectators_see_all_actions:
             return None
         return "action-not-available"
+
+    def _is_check_turn_timer_enabled(self, player: Player) -> str | None:
+        if self.status != "playing":
+            return "action-not-playing"
+        return None
+
+    def _is_read_all_boards_enabled(self, player: Player) -> str | None:
+        if self.status != "playing":
+            return "action-not-playing"
+        if not self._get_participant_players():
+            return "action-not-available"
+        if player.is_spectator and not self.options.spectators_see_all_actions:
+            return "action-not-available"
+        return None
 
     def _is_guess_letter_hidden(self, player: Player, action_id: str) -> Visibility:
         letter = action_id.rsplit("_", 1)[-1]
@@ -1063,6 +1188,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         board_end_delay = self._announce_guess_state(
             delay_ticks=self._pacing_ticks("turn_transition")
         )
+        self._start_turn_timer()
 
         BotHelper.jolt_bot_for_speech(
             guesser,
@@ -1105,6 +1231,17 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             user.speak(f"Used letters: {letters}.")
         else:
             user.speak("Used letters: none.")
+
+    def _action_read_all_boards(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        players = [p for p in self._get_participant_players() if not p.is_spectator]
+        if not players:
+            user.speak("No boards available.")
+            return
+        lines = [self._format_player_board_line(p) for p in sorted(players, key=lambda p: p.name.lower())]
+        user.speak(" ".join(lines))
 
     def _action_read_wheel_outcome(self, player: Player, action_id: str) -> None:
         user = self.get_user(player)
@@ -1152,8 +1289,19 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         if not self.tile_rack:
             user.speak("Rack not available.")
             return
-        rack_text = " ".join(letter.upper() for letter in self.tile_rack)
+        scored = [f"{letter.upper()}({LETTER_SCORES.get(letter.upper(), 0)})" for letter in self.tile_rack]
+        rack_text = ", ".join(scored)
         user.speak(f"Rack letters: {rack_text}.")
+
+    def _action_check_turn_timer(self, player: Player, action_id: str) -> None:
+        user = self.get_user(player)
+        if not user:
+            return
+        remaining = self.timer.seconds_remaining()
+        if remaining <= 0:
+            user.speak_l("poker-timer-disabled")
+            return
+        user.speak_l("poker-timer-remaining", seconds=remaining)
 
     def _format_score_line_brief(self, player: HanginWithFriendsPlayer) -> str:
         return f"{player.name} score {player.score}, balloons {player.balloons_remaining}"
@@ -1161,6 +1309,13 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
     def _format_score_line_detailed(self, player: HanginWithFriendsPlayer) -> str:
         return (
             f"{player.name} score {player.score}, balloons {player.balloons_remaining}, "
+            f"coins {player.coins}, reveal {player.lifeline_reveal}, "
+            f"remove {player.lifeline_remove}, retry {player.lifeline_retry}."
+        )
+
+    def _format_player_board_line(self, player: HanginWithFriendsPlayer) -> str:
+        return (
+            f"{player.name} board: score {player.score}, balloons {player.balloons_remaining}, "
             f"coins {player.coins}, reveal {player.lifeline_reveal}, "
             f"remove {player.lifeline_remove}, retry {player.lifeline_retry}."
         )
@@ -1334,6 +1489,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             post_pause_ticks=self._pacing_ticks("post_board_pause"),
             min_ticks=max(2, self._pacing_ticks("guess_result_pause")),
         )
+        if self.phase == "guessing":
+            self._start_turn_timer()
         self.rebuild_all_menus()
 
     def _apply_wrong_guess(self, guesser: HanginWithFriendsPlayer) -> None:
@@ -1359,6 +1516,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
         self._clear_round_timeline()
         self.phase = "round_end"
+        self.timer.clear()
         word_points = self._score_word_with_board_modifiers(self.secret_word)
         points = word_points * self.round_points_multiplier
         if guesser_solved:
@@ -1366,15 +1524,27 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             self._award_score(guesser, points)
             self.play_sound(CORRECT_SEQUENCE_SOUNDS[7])
             self.play_sound(SOUNDS["balloon"])
-            result_text = f"{guesser.name} solved the word."
+            result_text = f"{guesser.name} guessed the winning word: {self.secret_word.capitalize()} with {points} points."
             self.broadcast(result_text)
+            self.last_round_winner_id = guesser.id
+            if self.winner_streak_id == guesser.id:
+                self.winner_streak_count += 1
+            else:
+                self.winner_streak_id = guesser.id
+                self.winner_streak_count = 1
         else:
             guesser.balloons_remaining -= 1
             self._award_score(setter, points)
             self.play_sound(INCORRECT_SEQUENCE_SOUNDS[7])
             self.play_sound(SOUNDS["balloon"])
-            result_text = f"{guesser.name} did not solve the word."
+            result_text = f"{setter.name} set the winning word: {self.secret_word.capitalize()} with {points} points."
             self.broadcast(result_text)
+            self.last_round_winner_id = setter.id
+            if self.winner_streak_id == setter.id:
+                self.winner_streak_count += 1
+            else:
+                self.winner_streak_id = setter.id
+                self.winner_streak_count = 1
 
         eliminated_texts = self._eliminate_players_without_balloons(speak=False)
 
@@ -1412,9 +1582,51 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         guessed = set(self.guessed_letters)
         return [letter for letter in string.ascii_lowercase if letter not in guessed]
 
+    def _pick_random_rack_letter(self) -> str | None:
+        rack_letters = [c for c in self.tile_rack if c not in self.guessed_letters]
+        if rack_letters:
+            return random.choice(rack_letters)
+        available = self._available_letters()
+        return random.choice(available) if available else None
+
     def _format_board_summary(self) -> str:
         masked = self._spoken_board()
+        modifiers = self._format_board_modifiers_compact()
+        if modifiers:
+            return f"Board: {masked}. Modifiers: {modifiers}."
         return f"Board: {masked}."
+
+    def _format_board_modifiers_compact(self) -> str:
+        if not self.board_modifiers:
+            return ""
+        by_kind: dict[str, list[int]] = {kind: [] for kind in MODIFIER_ORDER}
+        for pos, kind in self.board_modifiers.items():
+            if kind in by_kind:
+                by_kind[kind].append(pos)
+
+        def format_positions(positions: list[int]) -> str:
+            if not positions:
+                return ""
+            parts = [str(p) for p in sorted(positions)]
+            if len(parts) == 1:
+                return parts[0]
+            if len(parts) == 2:
+                return f"{parts[0]} and {parts[1]}"
+            return ", ".join(parts[:-1]) + f", and {parts[-1]}"
+
+        lines: list[str] = []
+        mapping = {
+            "double_letter": "double letter",
+            "triple_letter": "triple letter",
+            "double_word": "double word",
+            "triple_word": "triple word",
+        }
+        for kind in MODIFIER_ORDER:
+            positions = by_kind.get(kind, [])
+            if not positions:
+                continue
+            lines.append(f"{mapping[kind]} on {format_positions(positions)}")
+        return "; ".join(lines)
 
     def _format_wheel_outcome(self) -> str:
         if not self.wheel_result:
@@ -1464,6 +1676,151 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             return
         self.broadcast(f"Mistakes left: {after}.")
 
+    def _pair_winner_fair(
+        self, eligible: list[HanginWithFriendsPlayer]
+    ) -> tuple[HanginWithFriendsPlayer, HanginWithFriendsPlayer]:
+        carry = self.get_player_by_id(self.last_round_winner_id)
+        if not isinstance(carry, HanginWithFriendsPlayer) or carry not in eligible:
+            setter = self._pick_least_recent(eligible, exclude_id="")
+            guesser = self._pick_least_recent(eligible, exclude_id=setter.id)
+            return (setter, guesser)
+        if carry.id == self.setter_id:
+            setter = carry
+            guesser = self._pick_fair_opponent(eligible, setter.id)
+        else:
+            guesser = carry
+            setter = self._pick_fair_opponent(eligible, guesser.id)
+        return (setter, guesser)
+
+    def _pair_round_robin(
+        self, eligible: list[HanginWithFriendsPlayer]
+    ) -> tuple[HanginWithFriendsPlayer, HanginWithFriendsPlayer]:
+        order = self._get_pairing_order(eligible)
+        if not order:
+            return (eligible[0], eligible[0])
+        idx = self.round_robin_index % len(order)
+        setter = self._get_player_by_id_or_fallback(order[idx], eligible)
+        guesser = self._get_player_by_id_or_fallback(order[(idx + 1) % len(order)], eligible)
+        self.round_robin_index = (idx + 1) % len(order)
+        return (setter, guesser)
+
+    def _pair_weighted_fair(
+        self, eligible: list[HanginWithFriendsPlayer]
+    ) -> tuple[HanginWithFriendsPlayer, HanginWithFriendsPlayer]:
+        weights = {p.id: self._weight_for_player(p.id) for p in eligible}
+        setter = self._weighted_choice(eligible, weights)
+        guesser_pool = [p for p in eligible if p.id != setter.id]
+        guesser = self._weighted_choice(guesser_pool, weights)
+        return (setter, guesser)
+
+    def _pair_winner_cap(
+        self, eligible: list[HanginWithFriendsPlayer]
+    ) -> tuple[HanginWithFriendsPlayer, HanginWithFriendsPlayer]:
+        cap = 2
+        if self.winner_streak_id and self.winner_streak_count >= cap:
+            setter = self._pick_least_recent(eligible, exclude_id="")
+            guesser = self._pick_least_recent(eligible, exclude_id=setter.id)
+            return (setter, guesser)
+        return self._pair_winner_fair(eligible)
+
+    def _pair_host_queue(
+        self, eligible: list[HanginWithFriendsPlayer]
+    ) -> tuple[HanginWithFriendsPlayer, HanginWithFriendsPlayer]:
+        order = self._get_pairing_order(eligible)
+        if not order:
+            return (eligible[0], eligible[0])
+        if self.round == 1 and self.host:
+            host_id = next((p.id for p in eligible if p.name == self.host), order[0])
+            self.host_queue_index = (order.index(host_id) + 1) % len(order)
+            setter = self._get_player_by_id_or_fallback(host_id, eligible)
+            guesser = self._pick_random_other(eligible, setter.id)
+            return (setter, guesser)
+        idx = self.host_queue_index % len(order)
+        setter = self._get_player_by_id_or_fallback(order[idx], eligible)
+        guesser = self._get_player_by_id_or_fallback(order[(idx + 1) % len(order)], eligible)
+        self.host_queue_index = (idx + 1) % len(order)
+        return (setter, guesser)
+
+    def _pair_performance(
+        self, eligible: list[HanginWithFriendsPlayer]
+    ) -> tuple[HanginWithFriendsPlayer, HanginWithFriendsPlayer]:
+        ranked = sorted(eligible, key=lambda p: (p.score, p.balloons_remaining))
+        guesser = ranked[0]
+        setter = ranked[-1] if ranked[-1].id != guesser.id else ranked[0]
+        if setter.id == guesser.id and len(ranked) > 1:
+            setter = ranked[-1]
+        return (setter, guesser)
+
+    def _pick_fair_opponent(
+        self, eligible: list[HanginWithFriendsPlayer], exclude_id: str
+    ) -> HanginWithFriendsPlayer:
+        candidates = [p for p in eligible if p.id != exclude_id]
+        if not candidates:
+            return self._get_player_by_id_or_fallback(exclude_id, eligible)
+        never_played = [p for p in candidates if p.id not in self.has_played_ids]
+        if never_played:
+            return random.choice(never_played)
+        return self._pick_least_recent(candidates, exclude_id="")
+
+    def _pick_least_recent(
+        self, eligible: list[HanginWithFriendsPlayer], exclude_id: str
+    ) -> HanginWithFriendsPlayer:
+        candidates = [p for p in eligible if p.id != exclude_id] or eligible
+        min_round = min(self.last_played_round.get(p.id, 0) for p in candidates)
+        tied = [p for p in candidates if self.last_played_round.get(p.id, 0) == min_round]
+        return random.choice(tied)
+
+    def _weight_for_player(self, player_id: str) -> int:
+        last_round = self.last_played_round.get(player_id, 0)
+        return max(1, self.round - last_round)
+
+    def _weighted_choice(
+        self,
+        candidates: list[HanginWithFriendsPlayer],
+        weights: dict[str, int],
+    ) -> HanginWithFriendsPlayer:
+        total = sum(weights.get(p.id, 1) for p in candidates)
+        if total <= 0:
+            return random.choice(candidates)
+        roll = random.uniform(0, total)
+        upto = 0.0
+        for p in candidates:
+            upto += weights.get(p.id, 1)
+            if roll <= upto:
+                return p
+        return candidates[-1]
+
+    def _get_pairing_order(self, eligible: list[HanginWithFriendsPlayer]) -> list[str]:
+        if self.participant_ids:
+            order = [pid for pid in self.participant_ids if any(p.id == pid for p in eligible)]
+            if order:
+                return order
+        return [p.id for p in eligible]
+
+    def _get_player_by_id_or_fallback(
+        self, player_id: str, eligible: list[HanginWithFriendsPlayer]
+    ) -> HanginWithFriendsPlayer:
+        player = self.get_player_by_id(player_id)
+        if isinstance(player, HanginWithFriendsPlayer) and player in eligible:
+            return player
+        return eligible[0]
+
+    def _pick_random_other(
+        self, eligible: list[HanginWithFriendsPlayer], exclude_id: str
+    ) -> HanginWithFriendsPlayer:
+        candidates = [p for p in eligible if p.id != exclude_id]
+        return random.choice(candidates) if candidates else eligible[0]
+
+    def _mark_players_as_played(
+        self, setter: HanginWithFriendsPlayer, guesser: HanginWithFriendsPlayer
+    ) -> None:
+        if setter.id not in self.has_played_ids:
+            self.has_played_ids.append(setter.id)
+        if guesser.id not in self.has_played_ids:
+            self.has_played_ids.append(guesser.id)
+        self.last_played_round[setter.id] = self.round
+        self.last_played_round[guesser.id] = self.round
+
     def _announce_guess_state(self, *, delay_ticks: int = 0) -> int:
         total_board_ticks = self._schedule_board_readout(delay_ticks=delay_ticks)
         summary_delay = total_board_ticks + self._pacing_ticks("post_board_pause")
@@ -1475,7 +1832,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             include_spectators=True,
             tag="hwf-board-readout",
         )
-        self._broadcast_spectator_player_boards(delay_ticks=summary_delay)
+        # Spectator boards are available via hotkeys instead of auto speech.
         return summary_delay + self.estimate_speech_ticks(summary_text)
 
     def _announce_balloons(self) -> str:
@@ -1590,6 +1947,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
     def _finish_with_winner(self, winner: HanginWithFriendsPlayer, message: str) -> None:
         self._clear_round_timeline()
+        self.timer.clear()
         self.phase = "game_end"
         self.last_match_end_message = message
         self.broadcast("Match over.")
@@ -1602,6 +1960,35 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
             else:
                 user.play_sound(SOUNDS["lose"])
         self.finish_game()
+
+    def _start_turn_timer(self) -> None:
+        seconds = self.options.round_timer_seconds
+        if seconds <= 0:
+            self.timer.clear()
+            return
+        self.timer.start(seconds)
+        self.timer_warning_played = False
+
+    def _maybe_play_timer_warning(self) -> None:
+        seconds = self.options.round_timer_seconds
+        if seconds < 20 or seconds <= 0:
+            return
+        if self.timer_warning_played:
+            return
+        if self.timer.seconds_remaining() == 5:
+            self.timer_warning_played = True
+            self.play_sound(SOUNDS["click2"], volume=40)
+
+    def _handle_turn_timeout(self) -> None:
+        if self.phase != "guessing":
+            return
+        player = self.get_player_by_id(self.guesser_id)
+        if not isinstance(player, HanginWithFriendsPlayer):
+            return
+        letter = self._pick_random_rack_letter()
+        if not letter:
+            return
+        self._resolve_letter_guess(letter)
 
     # bot logic
     def bot_think(self, player: HanginWithFriendsPlayer) -> str | None:
@@ -1708,10 +2095,7 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         return max(freqs.items(), key=lambda kv: (kv[1], kv[0]))[0]
 
     def _easy_pick_letter(self) -> str | None:
-        unguessed = [c for c in string.ascii_lowercase if c not in self.guessed_letters]
-        if not unguessed:
-            return None
-        return random.choice(unguessed)
+        return self._pick_random_rack_letter()
 
     def _best_pick_letter_elimination(self, candidates: list[str]) -> str | None:
         if not candidates:
@@ -1900,17 +2284,8 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
                 break
 
     def _format_board_modifiers_summary(self) -> str:
-        by_kind: dict[str, list[int]] = {kind: [] for kind in MODIFIER_ORDER}
-        for pos, kind in self.board_modifiers.items():
-            if kind in by_kind:
-                by_kind[kind].append(pos)
-        return (
-            "Board modifiers: "
-            f"DL [{self._format_positions(by_kind['double_letter'])}], "
-            f"TL [{self._format_positions(by_kind['triple_letter'])}], "
-            f"DW [{self._format_positions(by_kind['double_word'])}], "
-            f"TW [{self._format_positions(by_kind['triple_word'])}]."
-        )
+        compact = self._format_board_modifiers_compact()
+        return f"Board modifiers: {compact}." if compact else "Board modifiers: none."
 
     def _score_word_with_board_modifiers(self, word: str) -> int:
         if not word:
@@ -1942,13 +2317,10 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
         return word if word.isalpha() else None
 
     def _spoken_board(self) -> str:
-        """Format board for speech with modifier tags at each position."""
+        """Format board for speech with comma-separated positions."""
         parts: list[str] = []
-        for idx, ch in enumerate(self.masked_word, start=1):
+        for ch in self.masked_word:
             token = "blank" if ch == "_" else ch.lower()
-            kind = self.board_modifiers.get(idx)
-            if kind:
-                token = f"{token} {MODIFIER_LABELS[kind]}"
             parts.append(token)
         return ", ".join(parts)
 
@@ -1957,27 +2329,23 @@ class HanginWithFriendsGame(ActionGuardMixin, Game):
 
     def _schedule_board_readout(self, *, delay_ticks: int = 0) -> int:
         self.cancel_timeline("hwf-board-readout")
-        tokens = self._spoken_board_tokens()
-        board_token_step = self._pacing_ticks("board_token_step")
-        for idx, token in enumerate(tokens):
-            delay = delay_ticks + (idx * board_token_step)
-            self.schedule_timeline_speech(
-                token,
-                delay_ticks=delay,
-                buffer="table",
-                include_spectators=True,
-                tag="hwf-board-readout",
-            )
-            self.schedule_sound(SOUNDS["click2"], delay_ticks=delay, volume=35)
-        if not tokens:
+        board_text = self._format_board_summary()
+        if not board_text:
             return delay_ticks
-        return delay_ticks + ((len(tokens) - 1) * board_token_step)
+        self.schedule_timeline_speech(
+            board_text,
+            delay_ticks=delay_ticks,
+            buffer="table",
+            include_spectators=True,
+            tag="hwf-board-readout",
+        )
+        return delay_ticks + self.estimate_speech_ticks(board_text)
 
-    def _schedule_round_intro(self, text: str) -> None:
+    def _schedule_round_intro(self, text: str, *, delay_ticks: int | None = None) -> None:
         self.cancel_timeline("hwf-round-flow")
         self.schedule_timeline_speech(
             text,
-            delay_ticks=self._pacing_ticks("turn_transition"),
+            delay_ticks=self._pacing_ticks("turn_transition") if delay_ticks is None else delay_ticks,
             buffer="table",
             include_spectators=True,
             tag="hwf-round-flow",

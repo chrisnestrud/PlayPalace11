@@ -83,3 +83,19 @@ hwf-select-bot-difficulty = Select bot and difficulty:
 # Errors
 hwf-error-min-length-greater-than-max = Minimum word length cannot be greater than maximum word length.
 hwf-error-rack-smaller-than-max-length = Rack size cannot be smaller than maximum word length.
+
+# Pairing and timers
+hwf-set-round-timer = Round timer: { $seconds } seconds
+hwf-enter-round-timer = Enter round timer seconds (0 to disable):
+hwf-option-changed-round-timer = Round timer set to { $seconds } seconds.
+
+hwf-set-pairing-strategy = Pairing strategy: { $mode }
+hwf-select-pairing-strategy = Select pairing strategy:
+hwf-option-changed-pairing-strategy = Pairing strategy set to { $mode }.
+
+hwf-pairing-winner-fair = Winner stays (fair)
+hwf-pairing-round-robin = Round robin (rotate)
+hwf-pairing-weighted-fair = Weighted fair (random)
+hwf-pairing-winner-cap = Winner stays (cap)
+hwf-pairing-host-queue = Host first (queue)
+hwf-pairing-performance = Performance balance

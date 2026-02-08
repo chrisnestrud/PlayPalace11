@@ -175,7 +175,7 @@ class TestHanginWithFriendsActions:
 
         assert self.p1.balloons_remaining == before - 1
         spoken = self.user1.get_spoken_messages() + self.user2.get_spoken_messages()
-        assert any(msg.startswith("Bob solved the word.") for msg in spoken)
+        assert any(msg.startswith("Bob guessed the winning word:") for msg in spoken)
         assert not any(msg.startswith("Round scoring:") for msg in spoken)
 
     def test_failed_round_makes_guesser_lose_balloon(self):
@@ -292,6 +292,16 @@ class TestHanginWithFriendsActions:
         spoken = self.user2.get_spoken_messages()
         assert any(msg.startswith("Bob score 12.") for msg in spoken)
         assert any(msg.startswith("Bob balloons 4.") for msg in spoken)
+
+    def test_read_all_boards_hotkey_for_player(self):
+        self._force_round(self.p1, self.p2, "cat")
+        self.game.execute_action(self.p1, "choose_word", "cat")
+        self.user2.clear_messages()
+
+        self.game.execute_action(self.p2, "read_all_boards")
+        spoken = self.user2.get_spoken_messages()
+        assert any("Alice board:" in msg for msg in spoken)
+        assert any("Bob board:" in msg for msg in spoken)
 
     def test_check_scores_brief_and_detailed(self):
         self.p1.score = 14
@@ -432,7 +442,7 @@ class TestHanginSpectatorVisibility:
         us = MockUser("Spec")
         p1 = game.add_player("Alice", u1)
         p2 = game.add_player("Bob", u2)
-        game.add_spectator("Spec", us)
+        spec_player = game.add_spectator("Spec", us)
         game.options.spectators_see_all_actions = spectators_see_all_actions
         game.on_start()
         game.phase = "choose_word"
@@ -441,22 +451,20 @@ class TestHanginSpectatorVisibility:
         game.current_player = p1
         game.tile_rack = list("planetzzzzzz")
         us.clear_messages()
-        return game, p1, p2, us
+        return game, p1, p2, spec_player, us
 
     def test_spectator_gets_private_state_when_enabled(self):
-        game, p1, p2, spectator = self._setup_game(True)
+        game, p1, p2, spec_player, spectator = self._setup_game(True)
         game.execute_action(p1, "choose_word", "planet")
         game.execute_action(p2, "guess_letter_p")
         for _ in range(80):
             game.on_tick()
         spoken = spectator.get_spoken_messages()
         assert any(msg.startswith("Secret word chosen by Alice: PLANET") for msg in spoken)
-        assert any(msg.startswith("Alice board:") for msg in spoken)
-        assert any(msg.startswith("Bob board:") for msg in spoken)
         assert not any(msg.startswith("Board modifiers:") for msg in spoken)
 
     def test_spectator_private_state_hidden_when_disabled(self):
-        game, p1, p2, spectator = self._setup_game(False)
+        game, p1, p2, spec_player, spectator = self._setup_game(False)
         game.execute_action(p1, "choose_word", "planet")
         game.execute_action(p2, "guess_letter_p")
         for _ in range(80):
@@ -466,6 +474,24 @@ class TestHanginSpectatorVisibility:
         assert not any(msg.startswith("Alice board:") for msg in spoken)
         assert not any(msg.startswith("Bob board:") for msg in spoken)
         assert not any(msg.startswith("Board modifiers:") for msg in spoken)
+
+    def test_spectator_read_all_boards_hotkey_respects_option(self):
+        game, p1, p2, spec_player, spectator = self._setup_game(True)
+        game.execute_action(p1, "choose_word", "planet")
+        spectator.clear_messages()
+
+        game.execute_action(spec_player, "read_all_boards")
+        spoken = spectator.get_spoken_messages()
+        assert any("Alice board:" in msg for msg in spoken)
+        assert any("Bob board:" in msg for msg in spoken)
+
+        game, p1, p2, spec_player, spectator = self._setup_game(False)
+        game.execute_action(p1, "choose_word", "planet")
+        spectator.clear_messages()
+
+        game.execute_action(spec_player, "read_all_boards")
+        spoken = spectator.get_spoken_messages()
+        assert spoken == []
 
 
 class TestHanginTimelineSync:
@@ -514,19 +540,21 @@ class TestHanginTimelineSync:
         us.clear_messages()
 
         game.execute_action(p1, "choose_word", "planet")
-        selected_line = "Word selected. The word has 6 letters. Wrong guesses allowed: 8."
-        assert selected_line not in u2.get_spoken_messages()
-        assert selected_line not in us.get_spoken_messages()
+        def _selected_lines(messages):
+            return [msg for msg in messages if msg.startswith("Word selected. The word has 6 letters.")]
+
+        assert not _selected_lines(u2.get_spoken_messages())
+        assert not _selected_lines(us.get_spoken_messages())
 
         for _ in range(PACING_TICKS["normal"]["turn_transition"]):
             game.on_tick()
-            assert selected_line not in u2.get_spoken_messages()
-            assert selected_line not in us.get_spoken_messages()
+            assert not _selected_lines(u2.get_spoken_messages())
+            assert not _selected_lines(us.get_spoken_messages())
 
         game.on_tick()
-        assert selected_line in u1.get_spoken_messages()
-        assert selected_line in u2.get_spoken_messages()
-        assert selected_line in us.get_spoken_messages()
+        assert _selected_lines(u1.get_spoken_messages())
+        assert _selected_lines(u2.get_spoken_messages())
+        assert _selected_lines(us.get_spoken_messages())
 
 
 class TestHanginPacingProfiles:
