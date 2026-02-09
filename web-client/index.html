@@ -38,6 +38,17 @@
         padding: 12px;
       }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .volume-controls {
+        margin-top: 8px;
+      }
+      .volume-controls label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .volume-controls input[type="range"] {
+        width: 160px;
+      }
       input, select, button, textarea {
         font: inherit;
         padding: 8px;
@@ -140,6 +151,18 @@
           <button id="open-login-btn" type="button" class="secondary" tabindex="-1">Login/Reconnect</button>
           <button id="disconnect-btn" type="button" class="secondary" tabindex="-1">Disconnect</button>
           <span id="status" class="status" role="text">Disconnected</span>
+        </div>
+        <div class="row volume-controls">
+          <label for="music-volume">
+            Music
+            <input id="music-volume" type="range" min="0" max="100" step="10" value="20" />
+            <span id="music-volume-value" class="status">20%</span>
+          </label>
+          <label for="ambience-volume">
+            Ambience
+            <input id="ambience-volume" type="range" min="0" max="100" step="10" value="100" />
+            <span id="ambience-volume-value" class="status">100%</span>
+          </label>
         </div>
       </section>
 

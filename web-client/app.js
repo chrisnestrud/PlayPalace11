@@ -95,6 +95,10 @@ const elements = {
   disconnectBtn: document.getElementById("disconnect-btn"),
   status: document.getElementById("status"),
   loginError: document.getElementById("login-error"),
+  musicVolume: document.getElementById("music-volume"),
+  musicVolumeValue: document.getElementById("music-volume-value"),
+  ambienceVolume: document.getElementById("ambience-volume"),
+  ambienceVolumeValue: document.getElementById("ambience-volume-value"),
 
   menuList: document.getElementById("menu-list"),
   inlineInput: document.getElementById("inline-input"),
@@ -176,6 +180,43 @@ function renderVersion() {
     return;
   }
   elements.appVersion.textContent = `Web client version ${APP_VERSION}`;
+}
+
+function renderVolumeControls() {
+  const music = audio.getMusicVolumePercent();
+  const ambience = audio.getAmbienceVolumePercent();
+  if (elements.musicVolume) {
+    elements.musicVolume.value = String(music);
+  }
+  if (elements.musicVolumeValue) {
+    elements.musicVolumeValue.textContent = `${music}%`;
+  }
+  if (elements.ambienceVolume) {
+    elements.ambienceVolume.value = String(ambience);
+  }
+  if (elements.ambienceVolumeValue) {
+    elements.ambienceVolumeValue.textContent = `${ambience}%`;
+  }
+}
+
+function setMusicVolumePercent(value, { announce = false } = {}) {
+  const next = clampPercent(value, audio.getMusicVolumePercent());
+  audio.setMusicVolumePercent(next);
+  saveStoredPercent(MUSIC_VOLUME_KEY, next);
+  renderVolumeControls();
+  if (announce) {
+    a11y.announce(`Music: ${next}%`, { assertive: true });
+  }
+}
+
+function setAmbienceVolumePercent(value, { announce = false } = {}) {
+  const next = clampPercent(value, audio.getAmbienceVolumePercent());
+  audio.setAmbienceVolumePercent(next);
+  saveStoredPercent(AMBIENCE_VOLUME_KEY, next);
+  renderVolumeControls();
+  if (announce) {
+    a11y.announce(`Ambience: ${next}%`, { assertive: true });
+  }
 }
 
 function clearLoginError() {
@@ -287,19 +328,11 @@ function sendListOnlineWithGames() {
 }
 
 function adjustAmbienceVolume(deltaPercent) {
-  const current = audio.getAmbienceVolumePercent();
-  const next = clampPercent(current + deltaPercent, current);
-  audio.setAmbienceVolumePercent(next);
-  saveStoredPercent(AMBIENCE_VOLUME_KEY, next);
-  a11y.announce(`Ambience: ${next}%`, { assertive: true });
+  setAmbienceVolumePercent(audio.getAmbienceVolumePercent() + deltaPercent, { announce: true });
 }
 
 function adjustMusicVolume(deltaPercent) {
-  const current = audio.getMusicVolumePercent();
-  const next = clampPercent(current + deltaPercent, current);
-  audio.setMusicVolumePercent(next);
-  saveStoredPercent(MUSIC_VOLUME_KEY, next);
-  a11y.announce(`Music: ${next}%`, { assertive: true });
+  setMusicVolumePercent(audio.getMusicVolumePercent() + deltaPercent, { announce: true });
 }
 
 function closeInlineInput({ returnFocus = true } = {}) {
@@ -615,6 +648,7 @@ function installAudioUnlock() {
 
 async function bootstrap() {
   renderVersion();
+  renderVolumeControls();
   const validator = await loadPacketValidator();
 
   network = createNetworkClient({
@@ -720,6 +754,25 @@ async function bootstrap() {
 
   elements.openLoginBtn.addEventListener("click", () => {
     openLoginDialog();
+  });
+
+  elements.musicVolume?.addEventListener("input", (event) => {
+    const value = event.target?.value ?? "0";
+    setMusicVolumePercent(value, { announce: false });
+  });
+  elements.musicVolume?.addEventListener("change", async (event) => {
+    const value = event.target?.value ?? "0";
+    setMusicVolumePercent(value, { announce: true });
+    await audio.unlock();
+  });
+  elements.ambienceVolume?.addEventListener("input", (event) => {
+    const value = event.target?.value ?? "0";
+    setAmbienceVolumePercent(value, { announce: false });
+  });
+  elements.ambienceVolume?.addEventListener("change", async (event) => {
+    const value = event.target?.value ?? "0";
+    setAmbienceVolumePercent(value, { announce: true });
+    await audio.unlock();
   });
 
   elements.menuList.addEventListener("click", () => {

@@ -43,9 +43,11 @@ export function createAudioEngine(options = {}) {
   let currentMusic = null;
   let currentMusicName = "";
   let currentMusicLooping = true;
+  let pendingMusicPacket = null;
   let currentAmbience = null;
   let currentAmbienceLoop = null;
   let currentAmbienceLoopName = "";
+  let pendingAmbiencePacket = null;
   const activeEffects = new Set();
 
   if (context) {
@@ -64,12 +66,31 @@ export function createAudioEngine(options = {}) {
 
   async function unlock() {
     if (!context) {
+      retryPendingPlayback();
       return false;
     }
     if (context.state !== "running") {
       await context.resume();
     }
+    retryPendingPlayback();
     return context.state === "running";
+  }
+
+  function safePlay(audio, { onRejected } = {}) {
+    try {
+      const maybePromise = audio.play();
+      if (maybePromise && typeof maybePromise.catch === "function") {
+        maybePromise.catch(() => {
+          if (onRejected) {
+            onRejected();
+          }
+        });
+      }
+    } catch {
+      if (onRejected) {
+        onRejected();
+      }
+    }
   }
 
   function connectElement(audio, gainNode, panValue = 0, url = "") {
@@ -127,7 +148,7 @@ export function createAudioEngine(options = {}) {
       if (!attached && effectsGain) {
         audio.volume *= effectsGain.gain.value;
       }
-      void audio.play();
+      safePlay(audio);
     } catch {
       // Ignore autoplay/stream failures before unlock.
     }
@@ -144,7 +165,11 @@ export function createAudioEngine(options = {}) {
     // Match desktop behavior: don't restart music if the same track is already active.
     if (currentMusic && currentMusicName === name && currentMusicLooping === looping) {
       if (currentMusic.paused) {
-        void currentMusic.play().catch(() => {});
+        safePlay(currentMusic, {
+          onRejected: () => {
+            pendingMusicPacket = { name, looping };
+          },
+        });
       }
       return;
     }
@@ -161,14 +186,20 @@ export function createAudioEngine(options = {}) {
       if (!attached && musicGain) {
         audio.volume *= musicGain.gain.value;
       }
-      void audio.play();
       currentMusic = audio;
       currentMusicName = name;
       currentMusicLooping = looping;
+      pendingMusicPacket = null;
+      safePlay(audio, {
+        onRejected: () => {
+          pendingMusicPacket = { name, looping };
+        },
+      });
     } catch {
       currentMusic = audio;
       currentMusicName = name;
       currentMusicLooping = looping;
+      pendingMusicPacket = { name, looping };
     }
   }
 
@@ -185,6 +216,7 @@ export function createAudioEngine(options = {}) {
     currentMusic = null;
     currentMusicName = "";
     currentMusicLooping = true;
+    pendingMusicPacket = null;
   }
 
   function stopAmbience() {
@@ -207,6 +239,7 @@ export function createAudioEngine(options = {}) {
       currentAmbienceLoop = null;
     }
     currentAmbienceLoopName = "";
+    pendingAmbiencePacket = null;
   }
 
   function playAmbience(packet) {
@@ -217,7 +250,15 @@ export function createAudioEngine(options = {}) {
     }
     if (currentAmbienceLoop && currentAmbienceLoopName === loopName) {
       if (currentAmbienceLoop.paused) {
-        void currentAmbienceLoop.play().catch(() => {});
+        safePlay(currentAmbienceLoop, {
+          onRejected: () => {
+            pendingAmbiencePacket = {
+              loop: loopName,
+              intro: introName,
+              outro: packet.outro || "",
+            };
+          },
+        });
       }
       return;
     }
@@ -237,7 +278,16 @@ export function createAudioEngine(options = {}) {
     const startLoop = () => {
       currentAmbienceLoop = loopAudio;
       currentAmbienceLoopName = loopName;
-      void loopAudio.play().catch(() => {});
+      pendingAmbiencePacket = null;
+      safePlay(loopAudio, {
+        onRejected: () => {
+          pendingAmbiencePacket = {
+            loop: loopName,
+            intro: introName,
+            outro: packet.outro || "",
+          };
+        },
+      });
     };
 
     if (introName) {
@@ -252,11 +302,33 @@ export function createAudioEngine(options = {}) {
       }
       introAudio.addEventListener("ended", startLoop, { once: true });
       currentAmbience = introAudio;
-      void introAudio.play().catch(startLoop);
+      safePlay(introAudio, {
+        onRejected: () => {
+          pendingAmbiencePacket = {
+            loop: loopName,
+            intro: introName,
+            outro: packet.outro || "",
+          };
+          startLoop();
+        },
+      });
       return;
     }
 
     startLoop();
+  }
+
+  function retryPendingPlayback() {
+    if (pendingMusicPacket) {
+      const packet = pendingMusicPacket;
+      pendingMusicPacket = null;
+      playMusic(packet);
+    }
+    if (pendingAmbiencePacket) {
+      const packet = pendingAmbiencePacket;
+      pendingAmbiencePacket = null;
+      playAmbience(packet);
+    }
   }
 
   function setMusicVolumePercent(percent) {
@@ -330,5 +402,6 @@ export function createAudioEngine(options = {}) {
     setAmbienceVolumePercent,
     getMusicVolumePercent,
     getAmbienceVolumePercent,
+    retryPendingPlayback,
   };
 }
