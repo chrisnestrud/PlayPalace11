@@ -115,8 +115,8 @@ export function createHistoryView({
     } = options;
 
     store.addHistory(buffer, text);
-    const currentBufferMuted = mutedBuffers.has(getCurrentBufferName());
-    if (announce && !currentBufferMuted) {
+    const incomingBufferMuted = mutedBuffers.has(buffer);
+    if (announce && !incomingBufferMuted) {
       a11y.announce(text, { assertive });
     }
   }

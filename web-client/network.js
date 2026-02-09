@@ -173,9 +173,13 @@ export function createNetworkClient({ validator, onStatus, onPacket, onError }) 
     disconnect();
 
     onStatus("connecting");
-    ws = new WebSocket(serverUrl);
+    const socket = new WebSocket(serverUrl);
+    ws = socket;
 
-    ws.addEventListener("open", () => {
+    socket.addEventListener("open", () => {
+      if (socket !== ws) {
+        return;
+      }
       onStatus("connected");
       send({
         type: "authorize",
@@ -187,7 +191,10 @@ export function createNetworkClient({ validator, onStatus, onPacket, onError }) 
       });
     });
 
-    ws.addEventListener("message", (event) => {
+    socket.addEventListener("message", (event) => {
+      if (socket !== ws) {
+        return;
+      }
       try {
         const packet = JSON.parse(event.data);
         const check = validator.validateIncoming(packet);
@@ -201,11 +208,18 @@ export function createNetworkClient({ validator, onStatus, onPacket, onError }) 
       }
     });
 
-    ws.addEventListener("close", () => {
+    socket.addEventListener("close", () => {
+      if (socket !== ws) {
+        return;
+      }
+      ws = null;
       onStatus("disconnected");
     });
 
-    ws.addEventListener("error", () => {
+    socket.addEventListener("error", () => {
+      if (socket !== ws) {
+        return;
+      }
       onStatus("error");
       onError("WebSocket connection error.");
     });

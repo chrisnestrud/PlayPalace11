@@ -302,11 +302,19 @@ function saveRememberedUsername(username) {
   if (!safeUsername) {
     return;
   }
-  localStorage.setItem(REMEMBERED_USERNAME_KEY, safeUsername);
+  try {
+    localStorage.setItem(REMEMBERED_USERNAME_KEY, safeUsername);
+  } catch {
+    // Ignore persistence failures.
+  }
 }
 
 function clearRememberedUsername() {
-  localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+  try {
+    localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+  } catch {
+    // Ignore persistence failures.
+  }
 }
 
 function applyRememberedUsernameToLoginForm() {
