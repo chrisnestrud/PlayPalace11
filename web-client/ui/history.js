@@ -97,12 +97,14 @@ export function createHistoryView({
     }
     if (!isMobileLike) {
       historyToggleEl.hidden = false;
+      historyToggleEl.tabIndex = -1;
       historyToggleEl.setAttribute("aria-expanded", "true");
       historyContentEl.hidden = false;
       historyLogEl.setAttribute("aria-live", "off");
       historyLogEl.hidden = true;
       return;
     }
+    historyToggleEl.tabIndex = 0;
     historyContentEl.hidden = mobileCollapsed;
     historyLogEl.setAttribute("aria-live", "off");
     historyLogEl.hidden = false;
