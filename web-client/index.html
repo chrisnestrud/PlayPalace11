@@ -205,16 +205,42 @@
       </footer>
     </main>
 
-    <script src="./version.js"></script>
-    <script src="./config.sample.js"></script>
-    <script src="./config.js"></script>
     <script>
       (() => {
-        const version = String(window.PLAYPALACE_WEB_VERSION || "2026.02.08.1").trim();
-        const script = document.createElement("script");
-        script.type = "module";
-        script.src = `./app.js?v=${encodeURIComponent(version)}`;
-        document.body.appendChild(script);
+        const cacheBust = `cb=${Date.now()}`;
+
+        function loadScript(src, { type = "text/javascript", optional = false } = {}) {
+          return new Promise((resolve, reject) => {
+            const script = document.createElement("script");
+            if (type === "module") {
+              script.type = "module";
+            }
+            script.src = src;
+            script.onload = () => resolve();
+            script.onerror = () => {
+              if (optional) {
+                resolve();
+              } else {
+                reject(new Error(`Failed to load script: ${src}`));
+              }
+            };
+            document.body.appendChild(script);
+          });
+        }
+
+        (async () => {
+          await loadScript(`./version.js?${cacheBust}`, { optional: true });
+          await loadScript(`./config.sample.js?${cacheBust}`, { optional: true });
+          await loadScript(`./config.js?${cacheBust}`, { optional: true });
+
+          const version = String(window.PLAYPALACE_WEB_VERSION || "2026.02.08.1").trim();
+          await loadScript(`./app.js?v=${encodeURIComponent(version)}&${cacheBust}`, {
+            type: "module",
+          });
+        })().catch((error) => {
+          // Keep failures visible for deployment debugging.
+          console.error(error);
+        });
       })();
     </script>
   </body>
