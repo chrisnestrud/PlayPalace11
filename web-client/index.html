@@ -139,12 +139,34 @@
         border: 0;
         color: var(--text);
         padding: 0;
-        font-size: 1.5rem;
-        font-weight: 700;
+        font-size: inherit;
+        font-weight: inherit;
         cursor: default;
       }
       .actions-btn {
         margin-left: 8px;
+      }
+      .actions-list {
+        list-style: none;
+        margin: 8px 0 0 0;
+        padding: 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        max-height: 40vh;
+        overflow-y: auto;
+      }
+      .actions-item-btn {
+        width: 100%;
+        text-align: left;
+        border: 0;
+        border-radius: 0;
+        border-bottom: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        min-height: 44px;
+      }
+      .actions-list li:last-child .actions-item-btn {
+        border-bottom: 0;
       }
       dialog {
         border: 1px solid var(--border);
@@ -231,7 +253,7 @@
 
         <section class="panel">
           <div class="history-header">
-            <button id="history-toggle" class="history-toggle-title" type="button" aria-expanded="true">History</button>
+            <h2><button id="history-toggle" class="history-toggle-title" type="button" aria-expanded="true">History</button></h2>
           </div>
           <div id="history-content">
             <textarea id="history" class="history" readonly tabindex="0" aria-label="History"></textarea>
@@ -270,14 +292,13 @@
       </dialog>
 
       <dialog id="actions-dialog">
-        <form method="dialog" id="actions-dialog-form">
+        <div id="actions-dialog-form">
           <p><strong>Actions</strong></p>
-          <p>Run escape action for the current menu.</p>
+          <ul id="actions-list" class="actions-list"></ul>
           <div class="row" style="justify-content: flex-end; margin-top: 10px;">
-            <button value="cancel" type="button" id="actions-cancel" class="secondary">Cancel</button>
-            <button value="run" type="submit" id="actions-run">Run</button>
+            <button value="cancel" type="button" id="actions-cancel" class="secondary">Close</button>
           </div>
-        </form>
+        </div>
       </dialog>
 
       <dialog id="login-dialog">

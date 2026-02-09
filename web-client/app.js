@@ -136,9 +136,8 @@ const elements = {
   historyBuffer: document.getElementById("history-buffer"),
   actionsBtn: document.getElementById("actions-btn"),
   actionsDialog: document.getElementById("actions-dialog"),
-  actionsDialogForm: document.getElementById("actions-dialog-form"),
+  actionsList: document.getElementById("actions-list"),
   actionsCancel: document.getElementById("actions-cancel"),
-  actionsRun: document.getElementById("actions-run"),
 
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
@@ -201,6 +200,8 @@ const menuView = createMenuView({
 });
 let pendingInlineInput = null;
 let focusMenuOnNextMenuPacket = false;
+let pendingActionsMenuRequest = false;
+let activeActionsMenu = null;
 
 let network = null;
 
@@ -281,6 +282,7 @@ function setConnectedUi(connected) {
   elements.gameShell.hidden = !connected;
   elements.disconnectBtn.disabled = !connected;
   elements.openLoginBtn.disabled = connected;
+  updateActionsButtonVisibility();
 }
 
 function loadRememberedUsername() {
@@ -323,6 +325,27 @@ function parseMenuItems(itemsRaw) {
     }
   }
   return items;
+}
+
+function canOpenActionsPopup() {
+  if (!store.state.connection.authenticated) {
+    return false;
+  }
+  const menu = store.state.currentMenu;
+  if (!menu || menu.menuId === "main_menu") {
+    return false;
+  }
+  return menu.escapeBehavior === "select_last_option" && menu.items.length > 0;
+}
+
+function updateActionsButtonVisibility() {
+  if (!elements.actionsBtn) {
+    return;
+  }
+  const connected = store.state.connection.authenticated && !elements.gameShell.hidden;
+  const canOpen = connected && canOpenActionsPopup();
+  elements.actionsBtn.hidden = !canOpen;
+  elements.actionsBtn.disabled = !canOpen;
 }
 
 function sendMenuSelection(selectionIndex) {
@@ -547,19 +570,102 @@ function installDialogTabTrap(dialogEl, focusTargets) {
   });
 }
 
-function openActionsDialog() {
-  if (!store.state.connection.authenticated) {
+function installActionsDialogTabTrap(dialogEl) {
+  dialogEl.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !dialogEl.open) {
+      return;
+    }
+
+    const itemButtons = Array.from(
+      elements.actionsList?.querySelectorAll("button.actions-item-btn:not(:disabled)") || []
+    );
+    const targets = [...itemButtons, elements.actionsCancel].filter((el) => el && !el.disabled);
+    if (!targets.length) {
+      return;
+    }
+
+    const currentIndex = targets.indexOf(document.activeElement);
+    event.preventDefault();
+
+    if (currentIndex === -1) {
+      targets[0].focus();
+      return;
+    }
+
+    const delta = event.shiftKey ? -1 : 1;
+    const nextIndex = (currentIndex + delta + targets.length) % targets.length;
+    targets[nextIndex].focus();
+  });
+}
+
+function closeActionsDialog({ sendEscapeForActions = false } = {}) {
+  if (sendEscapeForActions && activeActionsMenu?.menuId) {
+    network.send({
+      type: "escape",
+      menu_id: activeActionsMenu.menuId,
+    });
+  }
+  pendingActionsMenuRequest = false;
+  activeActionsMenu = null;
+  if (elements.actionsList) {
+    elements.actionsList.innerHTML = "";
+  }
+  if (elements.actionsDialog?.open) {
+    elements.actionsDialog.close();
+  }
+}
+
+function sendActionMenuSelection(actionsMenu, selectionIndex) {
+  const item = actionsMenu.items[selectionIndex];
+  if (!item) {
     return;
   }
-  if (store.state.currentMenu.menuId === "main_menu") {
+  const packet = {
+    type: "menu",
+    menu_id: actionsMenu.menuId,
+    selection: selectionIndex + 1,
+  };
+  if (item.id !== null && item.id !== undefined) {
+    packet.selection_id = item.id;
+  }
+  network.send(packet);
+}
+
+function openActionsDialogForMenu(actionsMenu) {
+  activeActionsMenu = actionsMenu;
+  if (!elements.actionsList) {
     return;
   }
+  elements.actionsList.innerHTML = "";
+  actionsMenu.items.forEach((item, index) => {
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "actions-item-btn";
+    button.textContent = item.text;
+    button.addEventListener("click", () => {
+      sendActionMenuSelection(actionsMenu, index);
+      closeActionsDialog({ sendEscapeForActions: false });
+      elements.menuList.focus();
+    });
+    li.appendChild(button);
+    elements.actionsList.appendChild(li);
+  });
   if (!elements.actionsDialog.open) {
     elements.actionsDialog.showModal();
   }
   requestAnimationFrame(() => {
-    elements.actionsRun.focus();
+    const first = elements.actionsList?.querySelector("button.actions-item-btn");
+    (first || elements.actionsCancel)?.focus();
   });
+}
+
+function requestActionsDialog() {
+  if (!canOpenActionsPopup()) {
+    return;
+  }
+  pendingActionsMenuRequest = true;
+  runEscapeAction();
 }
 
 function handlePacket(packet) {
@@ -584,6 +690,16 @@ function handlePacket(packet) {
     case "menu": {
       const previousMenu = store.state.currentMenu;
       const items = parseMenuItems(packet.items);
+
+      if (pendingActionsMenuRequest) {
+        pendingActionsMenuRequest = false;
+        openActionsDialogForMenu({
+          menuId: packet.menu_id,
+          items,
+        });
+        return;
+      }
+
       let selection = 0;
 
       if (packet.selection_id) {
@@ -628,6 +744,7 @@ function handlePacket(packet) {
         gridEnabled: packet.grid_enabled ?? false,
         gridWidth: packet.grid_width ?? 1,
       });
+      updateActionsButtonVisibility();
       if (focusMenuOnNextMenuPacket) {
         focusMenuOnNextMenuPacket = false;
         requestAnimationFrame(() => {
@@ -684,6 +801,8 @@ function handlePacket(packet) {
     case "clear_ui": {
       closeInlineInput({ returnFocus: false });
       store.clearUi();
+      closeActionsDialog();
+      updateActionsButtonVisibility();
       break;
     }
     case "disconnect": {
@@ -691,6 +810,7 @@ function handlePacket(packet) {
       setStatus("Disconnected", true);
       audio.stopAll();
       closeInlineInput({ returnFocus: false });
+      closeActionsDialog();
       setConnectedUi(false);
       openLoginDialog();
       historyView.addEntry("Disconnected by server.", {
@@ -748,6 +868,7 @@ async function bootstrap() {
         setStatus("Disconnected");
         audio.stopAll();
         closeInlineInput({ returnFocus: false });
+        closeActionsDialog();
         setConnectedUi(false);
         openLoginDialog();
       } else if (status === "error") {
@@ -755,6 +876,7 @@ async function bootstrap() {
         setLoginError("Connection error.", { announce: true });
         audio.stopAll();
         closeInlineInput({ returnFocus: false });
+        closeActionsDialog();
         setConnectedUi(false);
         openLoginDialog();
       }
@@ -833,6 +955,7 @@ async function bootstrap() {
     setStatus("Disconnected");
     audio.stopAll();
     closeInlineInput({ returnFocus: false });
+    closeActionsDialog();
     setConnectedUi(false);
     openLoginDialog();
   });
@@ -841,19 +964,10 @@ async function bootstrap() {
     openLoginDialog();
   });
   elements.actionsBtn?.addEventListener("click", () => {
-    openActionsDialog();
+    requestActionsDialog();
   });
   elements.actionsCancel?.addEventListener("click", () => {
-    if (elements.actionsDialog.open) {
-      elements.actionsDialog.close();
-    }
-  });
-  elements.actionsDialogForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    runEscapeAction();
-    if (elements.actionsDialog.open) {
-      elements.actionsDialog.close();
-    }
+    closeActionsDialog({ sendEscapeForActions: true });
   });
 
   elements.musicVolume?.addEventListener("input", (event) => {
@@ -929,10 +1043,7 @@ async function bootstrap() {
     elements.inputCancel,
     elements.inputSubmit,
   ]);
-  installDialogTabTrap(elements.actionsDialog, [
-    elements.actionsCancel,
-    elements.actionsRun,
-  ]);
+  installActionsDialogTabTrap(elements.actionsDialog);
   setConnectedUi(false);
   openLoginDialog();
 }
