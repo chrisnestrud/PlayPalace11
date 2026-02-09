@@ -878,7 +878,6 @@ async function bootstrap() {
     const nextMuted = Boolean(event.target?.checked);
     audio.setMuted(nextMuted);
     saveStoredBool(AUDIO_MUTED_KEY, nextMuted);
-    a11y.announce(nextMuted ? "Audio muted" : "Audio unmuted", { assertive: true });
   });
 
   elements.menuList.addEventListener("click", () => {
