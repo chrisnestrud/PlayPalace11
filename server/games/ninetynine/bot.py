@@ -180,6 +180,10 @@ def _bot_evaluate_count(
     if two_player_score is not None:
         return two_player_score
 
+    setup_zone_score = _score_setup_zones(is_rs_games, new_count)
+    if setup_zone_score is not None:
+        return setup_zone_score
+
     if not is_rs_games:
         trap_score = _score_quentin_trap_avoidance(player, new_count)
         if trap_score is not None:
@@ -233,14 +237,21 @@ def _score_two_player_setup(
             return 7000
         if new_count == 64:
             return 3000
-        if (29 <= new_count <= 32) or (62 <= new_count <= 65) or (95 <= new_count <= 98):
-            return 5000
         return None
 
     if is_skip_card and 88 <= new_count <= 98:
         return -5000
     if new_count == 97:
         return 7000
+    return None
+
+
+def _score_setup_zones(is_rs_games: bool, new_count: int) -> int | None:
+    """Reward setup-zone positioning for Quentin C regardless of player count."""
+    if is_rs_games:
+        return None
+    if (29 <= new_count <= 32) or (62 <= new_count <= 65) or (95 <= new_count <= 98):
+        return 5000
     return None
 
 
