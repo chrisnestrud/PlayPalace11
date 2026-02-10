@@ -260,9 +260,13 @@ class Server(AdministrationMixin):
         protocol = "wss" if self._ssl_cert else "ws"
         print(f"Server running on {protocol}://{self.host}:{self.port}")
         if self.host == "127.0.0.1":
-            print("Bind IP is 127.0.0.1, use 0.0.0.0 to allow connections on all interfaces.")
-        elif self.host == "0.0.0.0":
-            print("Bind IP is 0.0.0.0, use 127.0.0.1 to limit to local connections.")
+            print(
+                "Bind IP is 127.0.0.1, use 0.0.0.0 to allow connections on all interfaces."
+            )  # nosec B104 - guidance message, not a bind default
+        elif self.host == "0.0.0.0":  # nosec B104 - guidance branch only
+            print(
+                "Bind IP is 0.0.0.0, use 127.0.0.1 to limit to local connections."
+            )  # nosec B104 - guidance message, not a bind default
         self._start_localization_warmup()
         self._lifecycle.resolve_gate(STARTUP_GATE_ID)
 
