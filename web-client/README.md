@@ -1,39 +1,23 @@
-# Web Client (Phase 1)
+# PlayPalace Web Client
 
-A minimal PlayPalace web POC implementing Phase 1 from `server/web.md`:
-- connect + authorize
-- server menu rendering + menu events
-- `speak` history/live region output
-- chat send/receive
-- `play_sound` and `play_music`
-- gameplay keybind packet sending
+This is an early version of a web client for the PlayPalace. is designed to connect to a server you indicate and can be hosted on the web.
+ 
+## Public Setup
 
-## Setup
+1. Copy  the /web-client directory to a public website location.
+2. Copy the sounds folder from the /client folder to the same place, and put it in ./sounds.
+3. Copy the config sample to config.js and update any of the items if desired, such as server, port, or sounds folder.
+4. GO to your new URL. You should see a login screen.
 
-1. Start the server:
-   - `cd server && uv sync && uv run python main.py`
-2. From repo root, serve static files so both `web-client/` and `client/packet_schema.json` are reachable:
+## Local Setup
+
+1. Start the web server:
    - `python3 -m http.server 8080`
 3. Open:
    - `http://127.0.0.1:8080/web-client/`
-4. Create local config from sample:
-   - `cp web-client/config.sample.js web-client/config.js`
-5. Configure websocket/sounds in `web-client/config.js` if needed.
-6. Log in with username/password.
+   
+## How it Works
 
-## Notes
-
-- Audio is unlocked on the first user gesture (click/key press).
-- Sound files are loaded from `soundBaseUrl` (default `./sounds`).
-- While connected, Tab focus cycles only between menu, history, and chat input.
-
-## Connection config
-
-Edit `web-client/config.js` (copied from `config.sample.js`):
-
-- `serverPort`: Override the websocket port on the current host.
-  - Example for your setup: `serverPort: 7000`
-- `serverUrl`: Full override (host + scheme + port), takes precedence.
-  - Example: `serverUrl: "wss://playpalace.example.com:7000"`
-- `soundBaseUrl`: Base path/URL for sound files.
-  - Default: `./sounds`
+When viewing the web client from a computer, you can tab between game, history, and chat similar to the desktop client. Most desktop hotkeys work here as well.
+From mobile, the menu items become buttons, and you can expand and collapse the history.
+Other desktop features like the buffers also work here.
