@@ -1,4 +1,4 @@
-"""Export packet schemas for both server and client consumers."""
+"""Export packet schemas for server, wx client, and BTSpeak client consumers."""
 
 from __future__ import annotations
 
@@ -19,12 +19,13 @@ from server.network.packet_models import (  # pylint: disable=wrong-import-posit
 )
 
 
-def _default_paths() -> tuple[Path, Path]:
+def _default_paths() -> tuple[Path, Path, Path]:
     base_dir = Path(__file__).resolve().parents[1]
     repo_root = Path(__file__).resolve().parents[2]
     server_path = base_dir / "packet_schema.json"
     client_path = repo_root / "client" / "packet_schema.json"
-    return server_path, client_path
+    btspeak_client_path = repo_root / "btspeak_client" / "packet_schema.json"
+    return server_path, client_path, btspeak_client_path
 
 
 def _write_schema(path: Path, payload: dict[str, Any]) -> None:
@@ -33,7 +34,7 @@ def _write_schema(path: Path, payload: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    server_default, client_default = _default_paths()
+    server_default, client_default, btspeak_client_default = _default_paths()
 
     parser = argparse.ArgumentParser(description="Export packet JSON schemas.")
     parser.add_argument(
@@ -48,6 +49,12 @@ def main() -> None:
         default=client_default,
         help="Path to write the client copy of the schema JSON.",
     )
+    parser.add_argument(
+        "--btspeak-client-out",
+        type=Path,
+        default=btspeak_client_default,
+        help="Path to write the BTSpeak client copy of the schema JSON.",
+    )
     args = parser.parse_args()
 
     CLIENT_TO_SERVER_PACKET_ADAPTER.rebuild()
@@ -58,7 +65,7 @@ def main() -> None:
         "server_to_client": SERVER_TO_CLIENT_PACKET_ADAPTER.json_schema(),
     }
 
-    for target in (args.server_out, args.client_out):
+    for target in (args.server_out, args.client_out, args.btspeak_client_out):
         _write_schema(target, payload)
         print(f"Wrote schema to {target}")
 

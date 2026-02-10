@@ -161,6 +161,7 @@ def test_packet_schema_files_are_up_to_date(tmp_path: Path) -> None:
     server_dir = repo_root / "server"
     server_out = tmp_path / "server_schema.json"
     client_out = tmp_path / "client_schema.json"
+    btspeak_client_out = tmp_path / "btspeak_client_schema.json"
     subprocess.run(
         [
             sys.executable,
@@ -169,9 +170,14 @@ def test_packet_schema_files_are_up_to_date(tmp_path: Path) -> None:
             str(server_out),
             "--client-out",
             str(client_out),
+            "--btspeak-client-out",
+            str(btspeak_client_out),
         ],
         cwd=server_dir,
         check=True,
     )
     assert server_out.read_text(encoding="utf-8") == (server_dir / "packet_schema.json").read_text(encoding="utf-8")
     assert client_out.read_text(encoding="utf-8") == (repo_root / "client" / "packet_schema.json").read_text(encoding="utf-8")
+    assert btspeak_client_out.read_text(encoding="utf-8") == (
+        repo_root / "btspeak_client" / "packet_schema.json"
+    ).read_text(encoding="utf-8")
