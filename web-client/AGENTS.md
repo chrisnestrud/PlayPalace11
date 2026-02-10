@@ -15,6 +15,10 @@
 - Deployment-specific settings belong in `config.js` (copied from `config.sample.js`).
 - Do not put maintainer-only values (like app version) in deployment config.
 
+## Packet Schema Sync
+- Keep `web-client/packet_schema.json` in sync with `client/packet_schema.json`.
+- After packet model changes, regenerate schema from `server/tools/export_packet_schema.py` and copy the updated client schema into `web-client/packet_schema.json`.
+
 ## Input/Accessibility
 - Preserve keyboard-first behavior and screen-reader friendliness.
 - Avoid focus jumps unless explicitly required by flow (dialogs, reconnect, etc.).
