@@ -1,0 +1,36 @@
+BTSpeak Client Integration
+
+This directory contains a BTSpeak-native Play Palace client and the files needed to add it to the BTSpeak User menu.
+
+Files
+- btspeak_client/run_btspeak_client.sh
+  Launcher script for the client.
+- btspeak_client/user-btspeak-client.menu
+  User-menu file containing a Play Palace entry.
+
+How to add the User menu entry
+BTSpeak reads the User menu from:
+- ~/BTSpeak/user.menu
+
+Option A: If you do not already have a User menu
+1. Copy the provided .menu file as your User menu:
+   cp /home/pi/play_palace/btspeak_client/btspeak_client/user-btspeak-client.menu ~/BTSpeak/user.menu
+
+Option B: If you already have ~/BTSpeak/user.menu
+1. Append only the entry line (skip the first "User Menu" title line):
+   tail -n +2 /home/pi/play_palace/btspeak_client/btspeak_client/user-btspeak-client.menu >> ~/BTSpeak/user.menu
+
+2. If shortcut letter p is already used in your User menu, edit ~/BTSpeak/user.menu and change the prefix:
+   p=Play Palace BTSpeak Client: ...
+   Example: y=Play Palace BTSpeak Client: ...
+
+Notes
+- The menu action uses an absolute path to this repo:
+  /home/pi/play_palace/btspeak_client/btspeak_client/run_btspeak_client.sh
+- If you move this repository, update that path in ~/BTSpeak/user.menu.
+- The launcher uses `uv run --project /home/pi/play_palace/btspeak_client/btspeak_client` when `uv` is available, otherwise it runs `python3 -m btspeak_client.client`.
+
+Troubleshooting
+- If selecting the menu item immediately returns to the menu, run the launcher manually to see the error:
+  /home/pi/play_palace/btspeak_client/btspeak_client/run_btspeak_client.sh
+- A common failure is trying to resolve `wxPython` via the old `client/` project; this repo now uses a dedicated `btspeak_client/pyproject.toml` with no wx dependency.
