@@ -177,6 +177,7 @@ class Game(
         self._estimate_errors: list[str] = []  # Collected errors
         self._estimate_running: bool = False  # Whether estimation is in progress
         self._estimate_lock: threading.Lock = threading.Lock()  # Protect results list
+        self._transcripts: dict[str, list[dict[str, str]]] = {}
 
     def rebuild_runtime_state(self) -> None:
         """Rebuild runtime-only state after deserialization.
@@ -335,6 +336,24 @@ class Game(
             if player.name == name:
                 return player
         return None
+
+    def _reset_transcripts(self) -> None:
+        """Initialize transcript storage for seated players."""
+        self._transcripts = {
+            player.id: []
+            for player in self.players
+            if not player.is_spectator
+        }
+
+    def record_transcript_event(self, player: Player | None, text: str, buffer: str = "table") -> None:
+        """Store a transcript entry for a player."""
+        if not player or player.is_spectator:
+            return
+        self._transcripts.setdefault(player.id, []).append({"text": text, "buffer": buffer})
+
+    def get_transcript(self, player_id: str) -> list[dict[str, str]]:
+        """Return the transcript history for a player."""
+        return list(self._transcripts.get(player_id, []))
 
     @property
     def team_manager(self) -> TeamManager:

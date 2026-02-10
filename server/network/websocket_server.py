@@ -26,6 +26,7 @@ class ClientConnection:
     address: str
     username: str | None = None
     authenticated: bool = False
+    replaced: bool = False
 
     async def send(self, packet: dict) -> None:
         """Send a packet to this client."""
