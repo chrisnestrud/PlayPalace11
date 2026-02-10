@@ -7,6 +7,8 @@
 ## Versioning
 - `version.js` is the single source of truth for web client version.
 - Increment `window.PLAYPALACE_WEB_VERSION` on every commit in this branch.
+- Format is `YYYY.MM.DD.N`.
+- `N` is monotonic and should not reset when the date changes (example: after `2026.02.08.32`, use `2026.02.09.33`).
 - `index.html` uses that value for `app.js?v=...` cache busting and footer display.
 
 ## Deployment Config
