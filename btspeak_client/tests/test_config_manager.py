@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from btspeak_client.config_manager import ConfigManager
 
 
@@ -73,3 +75,11 @@ def test_migrate_keeps_existing_global_identities(tmp_path: Path):
     migrated, changed = manager._migrate_identity_records(raw)
     assert changed is False
     assert list(migrated["identities"].keys()) == ["id1"]
+
+
+def test_add_identity_rejects_duplicate_username_case_insensitive(tmp_path: Path):
+    manager = ConfigManager(base_path=tmp_path)
+    manager.add_identity(username="Alice", password="pw1")
+
+    with pytest.raises(ValueError, match="already exists"):
+        manager.add_identity(username="alice", password="pw2")

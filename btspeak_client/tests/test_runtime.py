@@ -399,3 +399,14 @@ def test_server_menu_hides_remove_and_connect_when_no_servers():
         entry for entry in io.option_history if entry[0].startswith("Server menu for ")
     )
     assert server_options == ["add_server", "back"]
+
+
+def test_select_identity_shows_identity_list_then_enters_server_menu():
+    io = FakeIO(choices=["select_identity", "identity-1", "back", "exit"])
+    runtime, _, _ = make_runtime(io)
+
+    rc = runtime.run()
+
+    assert rc == 0
+    assert ("Select identity", ["identity-1", "back"]) in io.option_history
+    assert any(prompt.startswith("Server menu for ") for prompt, _ in io.option_history)
