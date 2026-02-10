@@ -83,14 +83,16 @@ class BTSpeakClientRuntime:
 
     def run(self) -> int:
         while self.running:
+            identities = self.config_manager.get_all_identities()
+            menu_options = [ChoiceOption("add_identity", "Add identity")]
+            if identities:
+                menu_options.append(ChoiceOption("remove_identity", "Remove identity"))
+                menu_options.append(ChoiceOption("select_identity", "Select identity"))
+            menu_options.append(ChoiceOption("exit", "Exit"))
+
             action = self.io.choose(
                 "Identity menu",
-                [
-                    ChoiceOption("add_identity", "Add identity"),
-                    ChoiceOption("remove_identity", "Remove identity"),
-                    ChoiceOption("select_identity", "Select identity"),
-                    ChoiceOption("exit", "Exit"),
-                ],
+                menu_options,
             )
             if action in (None, "exit"):
                 self.running = False
@@ -186,14 +188,16 @@ class BTSpeakClientRuntime:
                 return
 
             label = identity.get("username", "Identity")
+            servers = self.config_manager.get_all_servers()
+            menu_options = [ChoiceOption("add_server", "Add server")]
+            if servers:
+                menu_options.append(ChoiceOption("remove_server", "Remove server"))
+                menu_options.append(ChoiceOption("connect_server", "Connect to server"))
+            menu_options.append(ChoiceOption("back", "Back"))
+
             action = self.io.choose(
                 f"Server menu for {label}",
-                [
-                    ChoiceOption("add_server", "Add server"),
-                    ChoiceOption("remove_server", "Remove server"),
-                    ChoiceOption("connect_server", "Connect to server"),
-                    ChoiceOption("back", "Back"),
-                ],
+                menu_options,
             )
             if action in (None, "back"):
                 return

@@ -10,12 +10,14 @@ class FakeIO(IOAdapter):
         self.inputs = list(inputs or [])
         self.messages: list[str] = []
         self.rejected = 0
+        self.option_history: list[tuple[str, list[str]]] = []
 
     def speak(self, text: str, *, interrupt: bool = False) -> None:
         self.messages.append(text)
 
     def choose(self, prompt, options, *, default_key=None):
         assert options
+        self.option_history.append((prompt, [option.key for option in options]))
         if self.choices:
             return self.choices.pop(0)
         return default_key or options[0].key
@@ -370,3 +372,30 @@ def test_pending_request_input_line_sends_editbox_only():
         "text": "typed now",
         "input_id": "field-xyz",
     }
+
+
+def test_identity_menu_hides_remove_and_select_when_empty():
+    io = FakeIO(choices=["exit"])
+    runtime, _, config = make_runtime(io)
+    config.identities = {}
+
+    rc = runtime.run()
+
+    assert rc == 0
+    first_prompt, first_options = io.option_history[0]
+    assert first_prompt == "Identity menu"
+    assert first_options == ["add_identity", "exit"]
+
+
+def test_server_menu_hides_remove_and_connect_when_no_servers():
+    io = FakeIO(choices=["select_identity", "identity-1", "back", "exit"])
+    runtime, _, config = make_runtime(io)
+    config.servers = {}
+
+    rc = runtime.run()
+
+    assert rc == 0
+    server_prompt, server_options = next(
+        entry for entry in io.option_history if entry[0].startswith("Server menu for ")
+    )
+    assert server_options == ["add_server", "back"]
