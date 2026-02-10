@@ -160,3 +160,92 @@ def test_tls_failure_accepts_and_stores(monkeypatch):
     ws = asyncio.run(manager._handle_tls_failure("wss://example.com"))
     assert ws is not None
     assert handler.saved is not None
+
+
+def test_prepare_tls_if_needed_prompts_and_stores(monkeypatch):
+    class Handler(RecordingHandler):
+        server_id = "server-1"
+
+        def __init__(self):
+            super().__init__()
+            self.saved = None
+            self.config_manager = self
+
+        def set_trusted_certificate(self, server_id, cert_info):
+            self.saved = (server_id, cert_info)
+
+        def get_trusted_certificate(self, server_id):
+            return None
+
+    handler = Handler()
+    cert = CertificateInfo(
+        host="example.com",
+        common_name="example.com",
+        sans=("example.com",),
+        issuer="ca",
+        valid_from="now",
+        valid_to="later",
+        fingerprint="AA",
+        fingerprint_hex="AA",
+        pem="PEM",
+        matches_host=True,
+    )
+    manager = NetworkManager(handler, trust_prompt=lambda info: True)
+    monkeypatch.setattr(manager, "_probe_default_tls_connection", lambda url: False)
+    monkeypatch.setattr(manager, "_run_coroutine_sync", lambda coro: (coro.close(), cert)[1])
+
+    assert manager.prepare_tls_if_needed("wss://example.com") is True
+    assert handler.saved is not None
+
+
+def test_prepare_tls_if_needed_decline_returns_false(monkeypatch):
+    handler = RecordingHandler()
+    handler.server_id = "server-1"
+    handler.config_manager = type("Cfg", (), {"get_trusted_certificate": lambda self, sid: None})()
+    cert = CertificateInfo(
+        host="example.com",
+        common_name="example.com",
+        sans=("example.com",),
+        issuer="ca",
+        valid_from="now",
+        valid_to="later",
+        fingerprint="AA",
+        fingerprint_hex="AA",
+        pem="PEM",
+        matches_host=True,
+    )
+    manager = NetworkManager(handler, trust_prompt=lambda info: False)
+    monkeypatch.setattr(manager, "_probe_default_tls_connection", lambda url: False)
+    monkeypatch.setattr(manager, "_run_coroutine_sync", lambda coro: (coro.close(), cert)[1])
+
+    assert manager.prepare_tls_if_needed("wss://example.com") is False
+
+
+def test_open_connection_uses_trusted_certificate_entry(monkeypatch):
+    handler = RecordingHandler()
+    handler.server_id = "server-1"
+    handler.config_manager = type(
+        "Cfg",
+        (),
+        {"get_trusted_certificate": lambda self, sid: {"fingerprint": "AA"}},
+    )()
+    manager = NetworkManager(handler)
+
+    class FakeTransport:
+        def get_extra_info(self, _):
+            return None
+
+    class FakeWS:
+        transport = FakeTransport()
+
+        async def close(self):
+            return None
+
+    async def fake_connect(url, ssl=None):
+        return FakeWS()
+
+    monkeypatch.setattr(nm_mod, "connect", fake_connect)
+    monkeypatch.setattr(manager, "_verify_pinned_certificate", lambda ws: asyncio.sleep(0))
+
+    ws = asyncio.run(manager._open_connection("wss://example.com"))
+    assert ws is not None

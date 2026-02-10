@@ -25,7 +25,7 @@ def make_io_with_result(result):
 
 
 def test_choose_falls_back_to_label_when_key_is_not_numeric():
-    io = make_io_with_result(FakeChoice(key=99, label="Select identity"))
+    io = make_io_with_result(FakeChoice(key="x", label="Select identity"))
     options = [
         ChoiceOption("add_identity", "Add identity"),
         ChoiceOption("select_identity", "Select identity"),
@@ -42,8 +42,8 @@ def test_choose_supports_one_based_index():
     assert io.choose("Prompt", options) == "second"
 
 
-def test_choose_supports_zero_based_index():
-    io = make_io_with_result(FakeChoice(key=0, label="ignored"))
+def test_choose_one_based_first_item_maps_to_first_option():
+    io = make_io_with_result(FakeChoice(key=1, label="ignored"))
     options = [
         ChoiceOption("first", "First"),
         ChoiceOption("second", "Second"),
@@ -52,7 +52,7 @@ def test_choose_supports_zero_based_index():
 
 
 def test_choose_prefers_numeric_index_when_labels_duplicate():
-    io = make_io_with_result(FakeChoice(key=1, label="alice"))
+    io = make_io_with_result(FakeChoice(key=2, label="alice"))
     options = [
         ChoiceOption("identity-1", "alice"),
         ChoiceOption("identity-2", "alice"),
@@ -60,10 +60,7 @@ def test_choose_prefers_numeric_index_when_labels_duplicate():
     assert io.choose("Prompt", options) == "identity-2"
 
 
-def test_choose_handles_non_numeric_key_without_crashing():
-    io = make_io_with_result(FakeChoice(key="not-a-number", label="Second"))
-    options = [
-        ChoiceOption("first", "First"),
-        ChoiceOption("second", "Second"),
-    ]
-    assert io.choose("Prompt", options) == "second"
+def test_choose_returns_none_when_dialog_returns_none():
+    io = make_io_with_result(None)
+    options = [ChoiceOption("first", "First")]
+    assert io.choose("Prompt", options) is None

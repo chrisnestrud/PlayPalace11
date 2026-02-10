@@ -230,3 +230,18 @@ class AudioManager:
 
     def remove_playlist(self, playlist_id: str) -> bool:
         return self._playlists.pop(playlist_id, None) is not None
+
+    def remove_all_playlists(self) -> None:
+        self._playlists.clear()
+
+    def stop_all_audio(self) -> None:
+        """Stop all currently playing music, ambience, and one-shot sounds."""
+        self.stop_music()
+        self.stop_ambience()
+        self._reap_sound_processes()
+        for process in self._sound_processes:
+            try:
+                process.terminate()
+            except Exception:
+                pass
+        self._sound_processes = []

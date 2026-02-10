@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from dataclasses import dataclass
 from getpass import getpass
+import tempfile
+from pathlib import Path
 from typing import Sequence
 
 
@@ -43,6 +47,9 @@ class IOAdapter:
         read_only: bool = False,
     ) -> str | None:
         raise NotImplementedError
+
+    def view_long_text(self, title: str, text: str) -> None:
+        self.notify(f"{title}\n\n{text}")
 
     def rejected_action(self) -> None:
         return
@@ -145,6 +152,7 @@ class BTSpeakIO(IOAdapter):
 
         self._dialogs = dialogs
         self._host = host
+        self._use_dialog_commands = True
 
     def speak(self, text: str, *, interrupt: bool = False) -> None:
         self._host.say(text, immediate=interrupt)
@@ -159,42 +167,76 @@ class BTSpeakIO(IOAdapter):
         if not options:
             return None
 
+        if getattr(self, "_use_dialog_commands", False):
+            command = [
+                "/BTSpeak/bin/request-choice",
+                "-m",
+                prompt,
+                "-O",
+                "Select",
+                "-C",
+                "Cancel",
+                "-E",
+            ]
+            for index, option in enumerate(options, start=1):
+                if option.key == default_key:
+                    command.extend(["-d", str(index)])
+                    break
+            command.extend(option.label for option in options)
+            try:
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                completed = None
+            except BaseException:
+                completed = None
+            if completed and completed.returncode == 0:
+                output = completed.stdout.strip()
+                if output:
+                    token = output.split(" ", 1)[0]
+                    if token == "0":
+                        return None
+                    if token.isdigit():
+                        index = int(token)
+                        if 1 <= index <= len(options):
+                            return options[index - 1].key
+
         labels = [option.label for option in options]
         default_label = None
         for option in options:
             if option.key == default_key:
                 default_label = option.label
                 break
-
-        choice = self._dialogs.requestChoice(
-            labels,
-            message=prompt,
-            default=default_label,
-            allowEmptyChoice=True,
-            okayLabel="Select",
-            cancelLabel="Cancel",
-        )
+        try:
+            choice = self._dialogs.requestChoice(
+                labels,
+                message=prompt,
+                default=default_label,
+                allowEmptyChoice=True,
+                okayLabel="Select",
+                cancelLabel="Cancel",
+            )
+        except BaseException:
+            return None
         if choice is None:
             return None
-
-        # Resolve by numeric key first. Some environments return 0-based
-        # indices, others return 1-based indices.
         try:
             index = int(choice.key)
         except (TypeError, ValueError):
             index = None
-        if index is not None:
-            if 0 <= index < len(options):
-                return options[index].key
-            if 1 <= index <= len(options):
-                return options[index - 1].key
-
-        # Fall back to returned label for backends that don't provide indices.
+        if index is not None and 1 <= index <= len(options):
+            return options[index - 1].key
         selected_label = getattr(choice, "label", None)
-        if isinstance(selected_label, str):
-            for option in options:
-                if option.label == selected_label:
-                    return option.key
+        if not isinstance(selected_label, str):
+            return None
+        for option in options:
+            if option.label == selected_label:
+                return option.key
         return None
 
     def request_text(
@@ -206,23 +248,59 @@ class BTSpeakIO(IOAdapter):
         multiline: bool = False,
         read_only: bool = False,
     ) -> str | None:
-        value = self._dialogs.requestInput(
-            prompt=prompt,
-            password=password,
-            initialText=default,
-            showCancelButton=True,
-            okayLabel="Send",
-            cancelLabel="Cancel",
-            message=prompt,
-        )
-        if value is None:
-            return None
         if read_only:
-            self.speak(value)
-            return value
+            self.speak(default)
+            return default
+
+        command = ["/BTSpeak/bin/request-input"]
+        if password:
+            command.append("-p")
+        if default:
+            command.extend(["-d", default])
+        command.extend(["-O", "Send", "-C", "Cancel", prompt])
+
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        except BaseException:
+            return None
+        if completed.returncode != 0:
+            return None
+        value = completed.stdout
         if multiline:
             return value
         return value.strip()
+
+    def view_long_text(self, title: str, text: str) -> None:
+        fd, path = tempfile.mkstemp(prefix="btspeak_client_", suffix=".txt")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(f"{title}\n\n{text}\n")
+            completed = subprocess.run(
+                ["/BTSpeak/bin/view-file", str(Path(path))],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if completed.returncode != 0:
+                self.notify(f"{title}\n\n{text}")
+        except subprocess.TimeoutExpired:
+            self.notify(f"{title}\n\n{text}")
+        except BaseException:
+            self.notify(f"{title}\n\n{text}")
+        finally:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except BaseException:
+                pass
 
     def rejected_action(self) -> None:
         self._host.playRejectedAction()

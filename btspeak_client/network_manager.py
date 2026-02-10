@@ -185,18 +185,29 @@ class NetworkManager:
         if not server_url.startswith("wss://"):
             return await connect(server_url)
 
+        trust_entry = self._get_trusted_certificate_entry()
+        if trust_entry:
+            return await self._connect_with_trusted_certificate(server_url, trust_entry)
+
         try:
             websocket = await connect(server_url, ssl=self._build_default_ssl_context())
             await self._verify_pinned_certificate(websocket)
             return websocket
         except ssl.SSLCertVerificationError:
-            websocket = await self._handle_tls_failure(server_url)
-            if websocket:
-                return websocket
-            raise
+            raise TLSUserDeclinedError()
 
     def _build_default_ssl_context(self) -> ssl.SSLContext:
         return ssl.create_default_context()
+
+    async def _connect_with_trusted_certificate(self, server_url: str, trust_entry: dict):
+        """Connect with verification disabled and pin to stored fingerprint."""
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+        websocket = await connect(server_url, ssl=context)
+        await self._verify_pinned_certificate(websocket)
+        return websocket
 
     async def _handle_tls_failure(self, server_url: str):
         cert_info = await self._fetch_certificate_info(server_url)
@@ -217,6 +228,53 @@ class NetworkManager:
         websocket = await connect(server_url, ssl=context)
         await self._verify_pinned_certificate(websocket)
         return websocket
+
+    def prepare_tls_if_needed(self, server_url: str) -> bool:
+        if not server_url.startswith("wss://"):
+            return True
+
+        if self._get_trusted_certificate_entry():
+            return True
+
+        try:
+            if self._probe_default_tls_connection(server_url):
+                return True
+        except Exception:
+            return True
+
+        cert_info = self._run_coroutine_sync(self._fetch_certificate_info(server_url))
+        if cert_info is None:
+            return False
+
+        trust = False
+        if self.trust_prompt:
+            trust = bool(self.trust_prompt(cert_info))
+        if not trust:
+            return False
+
+        self._store_trusted_certificate(cert_info)
+        return True
+
+    def _probe_default_tls_connection(self, server_url: str) -> bool:
+        async def probe():
+            websocket = await connect(server_url, ssl=self._build_default_ssl_context())
+            try:
+                return True
+            finally:
+                await websocket.close()
+
+        try:
+            return bool(self._run_coroutine_sync(probe()))
+        except ssl.SSLCertVerificationError:
+            return False
+
+    @staticmethod
+    def _run_coroutine_sync(coroutine):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coroutine)
+        finally:
+            loop.close()
 
     async def _verify_pinned_certificate(self, websocket):
         fingerprint_hex, cert_dict, pem = self._extract_peer_certificate(websocket)

@@ -83,3 +83,51 @@ def test_add_identity_rejects_duplicate_username_case_insensitive(tmp_path: Path
 
     with pytest.raises(ValueError, match="already exists"):
         manager.add_identity(username="alice", password="pw2")
+
+
+def test_get_server_url_keeps_existing_port_in_host_url(tmp_path: Path):
+    manager = ConfigManager(base_path=tmp_path)
+    server_id = manager.add_server(name="Server", host="wss://example.com:443", port=8000)
+
+    assert manager.get_server_url(server_id) == "wss://example.com:443"
+
+
+def test_get_server_url_appends_port_when_missing_in_host_url(tmp_path: Path):
+    manager = ConfigManager(base_path=tmp_path)
+    server_id = manager.add_server(name="Server", host="wss://example.com", port=8000)
+
+    assert manager.get_server_url(server_id) == "wss://example.com:8000"
+
+
+def test_get_server_url_uses_embedded_port_when_stored_port_invalid(tmp_path: Path):
+    manager = ConfigManager(base_path=tmp_path)
+    server_id = manager.add_server(name="Server", host="wss://example.com:443", port=80008000)
+
+    assert manager.get_server_url(server_id) == "wss://example.com:443"
+
+
+def test_load_identities_normalizes_invalid_server_port(tmp_path: Path):
+    path = tmp_path / "identities.json"
+    path.write_text(
+        """{
+  "identities": {},
+  "servers": {
+    "s1": {
+      "server_id": "s1",
+      "name": "Server",
+      "host": "wss://example.com",
+      "port": 80008000,
+      "notes": ""
+    }
+  },
+  "last_server_id": null,
+  "last_identity_id": null
+}""",
+        encoding="utf-8",
+    )
+
+    manager = ConfigManager(base_path=tmp_path)
+    server = manager.get_server_by_id("s1")
+
+    assert server is not None
+    assert server["port"] == 8000

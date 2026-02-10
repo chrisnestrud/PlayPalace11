@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from urllib.parse import urlsplit, urlunsplit
 
 from .config_schemas import Identity, Identities, Server, UserAccount, validate_identities
 
@@ -110,6 +111,7 @@ class ConfigManager:
                     raw = json.load(f)
                     validated = validate_identities(raw)
                     validated, was_migrated = self._migrate_identity_records(validated)
+                    was_normalized = self._normalize_server_ports(validated)
                     if validated != raw:
                         self.identities = validated
                         self.save_identities()
@@ -118,6 +120,10 @@ class ConfigManager:
                         self.identities = validated
                         self.save_identities()
                         print("Identities migrated and saved.")
+                    elif was_normalized:
+                        self.identities = validated
+                        self.save_identities()
+                        print("Identities normalized and saved.")
                     return validated
             except Exception as e:
                 print(f"Error loading identities: {e}")
@@ -164,6 +170,37 @@ class ConfigManager:
             identities["last_identity_id"] = next(iter(identities["identities"].keys()))
 
         return identities, migrated
+
+    @staticmethod
+    def _extract_port_from_host(host: str) -> Optional[int]:
+        host = str(host or "").strip()
+        if not host:
+            return None
+        parsed = urlsplit(host if "://" in host else f"ws://{host}")
+        return parsed.port
+
+    def _normalize_port_for_host(self, host: str, port_value: Any) -> int:
+        embedded = self._extract_port_from_host(host)
+        if embedded is not None and 1 <= embedded <= 65535:
+            return embedded
+        try:
+            port = int(port_value)
+        except (TypeError, ValueError):
+            return 8000
+        if 1 <= port <= 65535:
+            return port
+        return 8000
+
+    def _normalize_server_ports(self, identities: Dict[str, Any]) -> bool:
+        changed = False
+        for server in identities.get("servers", {}).values():
+            host = str(server.get("host", ""))
+            current_port = server.get("port", 8000)
+            normalized = self._normalize_port_for_host(host, current_port)
+            if current_port != normalized:
+                server["port"] = normalized
+                changed = True
+        return changed
 
     def _load_profiles(self) -> Dict[str, Any]:
         """Load option profiles from file (shareable, no credentials)."""
@@ -565,16 +602,41 @@ class ConfigManager:
         if not server:
             return None
 
-        host = server.get("host", "")
-        port = server.get("port", 8000)
+        host = str(server.get("host", "")).strip()
+        if not host:
+            return None
 
-        # Check if host already has a scheme
+        port = self._normalize_port_for_host(host, server.get("port", 8000))
+
+        def with_port(scheme: str, netloc: str, path: str = "", query: str = "", fragment: str = "") -> str:
+            parsed_netloc = urlsplit(f"{scheme}://{netloc}")
+            if parsed_netloc.port is None:
+                if parsed_netloc.hostname:
+                    hostname = parsed_netloc.hostname
+                    if ":" in hostname and not hostname.startswith("["):
+                        hostname = f"[{hostname}]"
+                    userinfo = ""
+                    if parsed_netloc.username:
+                        userinfo = parsed_netloc.username
+                        if parsed_netloc.password:
+                            userinfo += f":{parsed_netloc.password}"
+                        userinfo += "@"
+                    netloc = f"{userinfo}{hostname}:{port}"
+                else:
+                    netloc = f"{netloc}:{port}"
+            return urlunsplit((scheme, netloc, path, query, fragment))
+
+        # Host may already include a ws/wss URL with path/query.
         if "://" in host:
-            scheme = host.split("://")[0].lower()
-            host_part = host.split("://", 1)[1]
-            return f"{scheme}://{host_part}:{port}"
-        else:
-            return f"ws://{host}:{port}"
+            parsed = urlsplit(host)
+            scheme = (parsed.scheme or "ws").lower()
+            netloc = parsed.netloc or parsed.path
+            path = parsed.path if parsed.netloc else ""
+            return with_port(scheme, netloc, path=path, query=parsed.query, fragment=parsed.fragment)
+
+        # Bare host form (hostname, hostname:port, or [ipv6]:port).
+        parsed = urlsplit(f"ws://{host}")
+        return with_port("ws", parsed.netloc or host, path=parsed.path, query=parsed.query, fragment=parsed.fragment)
 
     def set_last_server(self, server_id: str):
         """Set the last connected server.

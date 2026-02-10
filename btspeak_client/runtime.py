@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from threading import Event
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
 from .audio_manager import AudioManager
@@ -51,80 +53,257 @@ class BTSpeakClientRuntime:
 
         self.current_menu_id: str | None = None
         self.current_menu_items: list[dict] = []
+        self.current_menu_selection_id: str | None = None
+        self.current_menu_position: int | None = None
+        self.current_menu_escape_behavior: str = "keybind"
         self.pending_input_id: str | None = None
         self._ping_start_time: float | None = None
 
         self.client_options: dict = {}
+        self.server_options: dict = {}
+        self._current_credentials: Credentials | None = None
         self.buffer_system = BufferSystem()
         self.audio_manager = AudioManager()
         for name in ("all", "table", "chats", "activity", "misc"):
             self.buffer_system.create_buffer(name)
 
+        self._debug_log_path = Path.home() / ".playpalace" / "btspeak_client_debug.log"
+
     def _build_default_io(self) -> IOAdapter:
         try:
             return BTSpeakIO()
-        except Exception:
+        except BaseException:
             return ConsoleIO()
 
-    def _prompt_trust_decision(self, cert_info: CertificateInfo) -> bool:
-        lines = [
-            "Untrusted certificate.",
-            f"Host: {cert_info.host}",
-            f"Common name: {cert_info.common_name or '(none)'}",
-            f"Fingerprint: {cert_info.fingerprint}",
-        ]
-        self.io.notify(" ".join(lines))
-        choice = self.io.choose(
-            "Trust this certificate for this server?",
-            [ChoiceOption("yes", "Yes"), ChoiceOption("no", "No")],
-            default_key="no",
+    def _debug_log(self, message: str) -> None:
+        try:
+            self._debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().isoformat()
+            with self._debug_log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"[{timestamp}] {message}\n")
+        except Exception:
+            pass
+
+    def _safe_notify(self, message: str) -> None:
+        try:
+            self.io.notify(message)
+        except BaseException as exc:
+            self._debug_log(f"notify failed: {exc!r}")
+
+    def _safe_choose(
+        self,
+        prompt: str,
+        options: list[ChoiceOption],
+        *,
+        default_key: str | None = None,
+    ) -> str | None:
+        try:
+            choice = self.io.choose(prompt, options, default_key=default_key)
+            self._debug_log(f"choose: prompt={prompt!r} result={choice!r}")
+            return choice
+        except BaseException as exc:
+            self._debug_log(f"choose failed for {prompt!r}: {exc!r}")
+            return None
+
+    def _confirm(
+        self,
+        question: str,
+        *,
+        default_yes: bool = False,
+        yes_label: str = "Yes",
+        no_label: str = "No",
+    ) -> bool:
+        choice = self._safe_choose(
+            question,
+            [ChoiceOption("yes", yes_label), ChoiceOption("no", no_label)],
+            default_key="yes" if default_yes else "no",
         )
         return choice == "yes"
 
+    def _show_instruction_dialog(self, heading: str, instruction: str) -> None:
+        self.io.view_long_text(heading, instruction)
+
+    @staticmethod
+    def _extract_hotkey(label: str) -> str | None:
+        for char in label:
+            if char.isalnum():
+                return char.lower()
+        return None
+
+    def _format_menu_choice_options(self) -> list[ChoiceOption]:
+        key_counts: dict[str, int] = {}
+        for item in self.current_menu_items:
+            hotkey = self._extract_hotkey(item.get("text", ""))
+            if hotkey:
+                key_counts[hotkey] = key_counts.get(hotkey, 0) + 1
+
+        options: list[ChoiceOption] = []
+        for index, item in enumerate(self.current_menu_items, start=1):
+            text = item.get("text", "")
+            hotkey = self._extract_hotkey(text)
+            if hotkey and key_counts.get(hotkey, 0) == 1:
+                label = f"{text}, {hotkey}"
+            else:
+                label = text
+            options.append(ChoiceOption(f"menu:{index}", label))
+        options.append(ChoiceOption("back", "Back"))
+        return options
+
+    def _select_server_menu_command(self) -> bool:
+        if not self.current_menu_items:
+            self.io.notify("No server menu options are currently available.")
+            return False
+
+        default_key = None
+        if self.current_menu_selection_id:
+            for index, item in enumerate(self.current_menu_items, start=1):
+                if item.get("id") == self.current_menu_selection_id:
+                    default_key = f"menu:{index}"
+                    break
+        if default_key is None and self.current_menu_position is not None:
+            position = self.current_menu_position + 1
+            if 1 <= position <= len(self.current_menu_items):
+                default_key = f"menu:{position}"
+
+        choice = self._safe_choose(
+            "Select a command",
+            self._format_menu_choice_options(),
+            default_key=default_key,
+        )
+        if not choice or choice == "back" or not choice.startswith("menu:"):
+            return False
+
+        selection = int(choice.split(":", 1)[1])
+        payload = {
+            "type": "menu",
+            "menu_id": self.current_menu_id,
+            "selection": selection,
+        }
+        item_id = self.current_menu_items[selection - 1].get("id")
+        if item_id:
+            payload["selection_id"] = item_id
+        self.network.send_packet(payload)
+        return True
+
+    def _review_buffer(self) -> None:
+        choice = self._safe_choose(
+            "Select buffer to review",
+            [
+                ChoiceOption("all", "All"),
+                ChoiceOption("table", "Table"),
+                ChoiceOption("chats", "Chats"),
+                ChoiceOption("activity", "Activity"),
+                ChoiceOption("misc", "Misc"),
+                ChoiceOption("back", "Back"),
+            ],
+            default_key="all",
+        )
+        if not choice or choice == "back":
+            return
+
+        items = self.buffer_system.buffers.get(choice, [])
+        lines = [item.get("text", "") for item in items if item.get("text")]
+        if not lines:
+            self.io.notify(f"{choice} buffer is empty.")
+            return
+        self.io.view_long_text(f"{choice.capitalize()} buffer", "\n".join(lines))
+
+    def _prompt_trust_decision(self, cert_info: CertificateInfo) -> bool:
+        lines = [
+            f"Host: {cert_info.host}",
+            f"Common name: {cert_info.common_name or '(none)'}",
+            f"Subject alt names: {', '.join(cert_info.sans) if cert_info.sans else '(none)'}",
+            f"Issuer: {cert_info.issuer or '(unknown)'}",
+            f"Valid from: {cert_info.valid_from or '(unknown)'}",
+            f"Valid to: {cert_info.valid_to or '(unknown)'}",
+            f"Host match: {'yes' if cert_info.matches_host else 'no'}",
+            f"Fingerprint: {cert_info.fingerprint}",
+        ]
+        details = "\n".join(lines)
+
+        try:
+            self.io.view_long_text("Untrusted certificate", details)
+        except BaseException as exc:
+            self._debug_log(f"cert details failed: {exc!r}")
+            self._safe_notify(details)
+
+        choice = self._safe_choose(
+            "Trust this certificate? Select an option and press Enter.",
+            [
+                ChoiceOption("trust", "Trust certificate"),
+                ChoiceOption("decline", "Decline"),
+            ],
+            default_key="decline",
+        )
+        return choice == "trust"
+
     def run(self) -> int:
+        self._debug_log("run: start")
         while self.running:
             identities = self.config_manager.get_all_identities()
-            menu_options = [ChoiceOption("add_identity", "Add identity")]
+            self._debug_log(f"run: identities={len(identities)}")
             if identities:
-                menu_options.append(ChoiceOption("remove_identity", "Remove identity"))
-                menu_options.append(ChoiceOption("select_identity", "Select identity"))
+                menu_options = [
+                    ChoiceOption("select_identity", "Select identity"),
+                    ChoiceOption("remove_identity", "Remove identity"),
+                    ChoiceOption("add_identity", "Add identity"),
+                ]
+            else:
+                menu_options = [ChoiceOption("add_identity", "Add identity")]
             menu_options.append(ChoiceOption("exit", "Exit"))
 
-            action = self.io.choose(
+            action = self._safe_choose(
                 "Identity menu",
                 menu_options,
             )
-            if action in (None, "exit"):
+            self._debug_log(f"run: selected action={action!r}")
+            if action is None:
+                self.running = False
+                break
+            if action == "exit":
                 self.running = False
                 break
 
-            if action == "add_identity":
-                self._add_identity_flow()
-            elif action == "remove_identity":
-                self._remove_identity_flow()
-            elif action == "select_identity":
-                identity_id = self._select_identity_flow()
-                if identity_id:
-                    self._identity_server_menu(identity_id)
+            try:
+                if action == "add_identity":
+                    self._add_identity_flow()
+                elif action == "remove_identity":
+                    self._remove_identity_flow()
+                elif action == "select_identity":
+                    identity_id = self._select_identity_flow()
+                    if identity_id:
+                        self._identity_server_menu(identity_id)
+            except BaseException as exc:
+                self._debug_log(f"main menu action {action!r} failed: {exc!r}")
+                self._safe_notify("Client error. Returning to menu.")
 
         self.network.disconnect(wait=True)
+        self._debug_log("run: stop")
         return 0
 
     def _add_identity_flow(self):
-        username = (self.io.request_text("Username", default="") or "").strip()
-        if not username:
-            self.io.notify("Username is required.")
-            return
-
-        password = self.io.request_text("Password", default="", password=True) or ""
-        if not password:
-            self.io.notify("Password is required.")
-            return
-
-        email = self.io.request_text("Email (optional)", default="") or ""
-        notes = self.io.request_text("Notes (optional)", default="") or ""
-
+        self._debug_log("add_identity: start")
         try:
+            self._debug_log("add_identity: request username")
+            username = (self.io.request_text("Username", default="") or "").strip()
+            if not username:
+                self._debug_log("add_identity: username missing")
+                self._safe_notify("Username is required.")
+                return
+
+            self._debug_log("add_identity: request password")
+            password = self.io.request_text("Password", default="", password=True) or ""
+            if not password:
+                self._debug_log("add_identity: password missing")
+                self._safe_notify("Password is required.")
+                return
+
+            self._debug_log("add_identity: request email")
+            email = self.io.request_text("Email (optional)", default="") or ""
+            self._debug_log("add_identity: request notes")
+            notes = self.io.request_text("Notes (optional)", default="") or ""
+
+            self._debug_log("add_identity: save identity")
             identity_id = self.config_manager.add_identity(
                 username=username,
                 password=password,
@@ -132,10 +311,16 @@ class BTSpeakClientRuntime:
                 notes=notes,
             )
         except ValueError as exc:
-            self.io.notify(str(exc))
+            self._debug_log(f"add_identity: value error {exc!r}")
+            self._safe_notify(str(exc))
+            return
+        except BaseException as exc:
+            self._debug_log(f"add_identity: base exception {exc!r}")
+            self._safe_notify(f"Unable to add identity: {exc}")
             return
         self.config_manager.set_last_identity(identity_id)
-        self.io.notify("Identity added.")
+        self._debug_log(f"add_identity: success {identity_id}")
+        self._safe_notify("Identity added.")
 
     def _remove_identity_flow(self):
         identities = self.config_manager.get_all_identities()
@@ -147,12 +332,11 @@ class BTSpeakClientRuntime:
         if not identity_id:
             return
 
-        confirm = self.io.choose(
-            "Remove this identity?",
-            [ChoiceOption("yes", "Yes"), ChoiceOption("back", "Back")],
-            default_key="back",
+        self._show_instruction_dialog(
+            "Remove identity confirmation",
+            "Press Enter on Dismiss, then choose Yes to remove the identity or Back to cancel.",
         )
-        if confirm != "yes":
+        if not self._confirm("Remove this identity?", default_yes=False, yes_label="Yes", no_label="Back"):
             return
         self.config_manager.delete_identity(identity_id)
         self.io.notify("Identity removed.")
@@ -167,15 +351,14 @@ class BTSpeakClientRuntime:
         for identity_id, identity in identities.items():
             username = identity.get("username", "Unknown")
             email = identity.get("email", "")
-            suffix = identity_id.split("-")[0] + "-" + identity_id.split("-")[-1][:8]
             if email:
-                label = f"{username} ({email}) [{suffix}]"
+                label = f"{username} ({email})"
             else:
-                label = f"{username} [{suffix}]"
+                label = username
             options.append(ChoiceOption(identity_id, label))
         options.append(ChoiceOption("back", "Back"))
 
-        choice = self.io.choose(prompt, options)
+        choice = self._safe_choose(prompt, options)
         if not choice or choice == "back":
             return None
         return choice
@@ -189,6 +372,8 @@ class BTSpeakClientRuntime:
 
     def _identity_server_menu(self, identity_id: str):
         while self.running:
+            if self.connected:
+                self._disconnect_and_stop_audio()
             identity = self.config_manager.get_identity_by_id(identity_id)
             if not identity:
                 self.io.notify("Identity no longer exists.")
@@ -196,26 +381,37 @@ class BTSpeakClientRuntime:
 
             label = identity.get("username", "Identity")
             servers = self.config_manager.get_all_servers()
-            menu_options = [ChoiceOption("add_server", "Add server")]
             if servers:
-                menu_options.append(ChoiceOption("remove_server", "Remove server"))
-                menu_options.append(ChoiceOption("connect_server", "Connect to server"))
+                menu_options = [
+                    ChoiceOption("connect_server", "Select server"),
+                    ChoiceOption("remove_server", "Remove server"),
+                    ChoiceOption("add_server", "Add server"),
+                ]
+            else:
+                menu_options = [ChoiceOption("add_server", "Add server")]
             menu_options.append(ChoiceOption("back", "Back"))
 
-            action = self.io.choose(
+            action = self._safe_choose(
                 f"Server menu for {label}",
                 menu_options,
             )
+            self._debug_log(f"server_menu: identity={identity_id} action={action!r}")
             if action in (None, "back"):
+                if self.connected:
+                    self._disconnect_and_stop_audio()
                 return
-            if action == "add_server":
-                self._add_server_flow()
-            elif action == "remove_server":
-                self._remove_server_flow()
-            elif action == "connect_server":
-                credentials = self._build_credentials(identity_id)
-                if credentials and self._attempt_connection(credentials):
-                    self._session_loop()
+            try:
+                if action == "add_server":
+                    self._add_server_flow()
+                elif action == "remove_server":
+                    self._remove_server_flow()
+                elif action == "connect_server":
+                    credentials = self._build_credentials(identity_id)
+                    if credentials and self._attempt_connection(credentials):
+                        self._session_loop()
+            except BaseException as exc:
+                self._debug_log(f"server menu action {action!r} failed: {exc!r}")
+                self._safe_notify("Client error. Returning to server menu.")
 
     def _add_server_flow(self):
         name = (self.io.request_text("Server name", default="") or "").strip()
@@ -223,16 +419,25 @@ class BTSpeakClientRuntime:
             self.io.notify("Server name is required.")
             return
 
-        host = (self.io.request_text("Host (e.g. ws://host or wss://host)", default="") or "").strip()
+        host = (self.io.request_text("Host (e.g. wss://host or host)", default="") or "").strip()
         if not host:
             self.io.notify("Host is required.")
             return
 
-        port_text = (self.io.request_text("Port", default="8000") or "8000").strip()
+        port_value = self.io.request_text("Port (default 8000)", default="8000")
+        if port_value is None:
+            return
+        port_text = port_value.strip()
+        if not port_text:
+            self.io.notify("Port is required.")
+            return
         try:
             port = int(port_text)
         except ValueError:
             self.io.notify("Port must be a number.")
+            return
+        if not 1 <= port <= 65535:
+            self.io.notify("Port must be between 1 and 65535.")
             return
 
         notes = self.io.request_text("Notes (optional)", default="") or ""
@@ -248,28 +453,31 @@ class BTSpeakClientRuntime:
         options = []
         for server_id, server in servers.items():
             name = server.get("name", "Unknown Server")
-            host = server.get("host", "")
-            port = server.get("port", 8000)
-            options.append(ChoiceOption(server_id, f"{name} ({host}:{port})"))
+            options.append(ChoiceOption(server_id, name))
         options.append(ChoiceOption("back", "Back"))
-        choice = self.io.choose(prompt, options)
+        choice = self._safe_choose(prompt, options)
         if not choice or choice == "back":
             return None
         return choice
 
     def _remove_server_flow(self):
         server_id = self._select_server("Remove which server?")
+        self._debug_log(f"remove_server: selected={server_id!r}")
         if not server_id:
             return
 
-        confirm = self.io.choose(
-            "Remove this server?",
-            [ChoiceOption("yes", "Yes"), ChoiceOption("back", "Back")],
-            default_key="back",
+        self._show_instruction_dialog(
+            "Remove server confirmation",
+            "Press Enter on Dismiss, then choose Yes to remove the server or Back to cancel.",
         )
-        if confirm != "yes":
+        confirmed = self._confirm("Remove this server?", default_yes=False, yes_label="Yes", no_label="Back")
+        self._debug_log(f"remove_server: confirm={confirmed!r}")
+        if not confirmed:
             return
+        before = len(self.config_manager.get_all_servers())
         self.config_manager.delete_server(server_id)
+        after = len(self.config_manager.get_all_servers())
+        self._debug_log(f"remove_server: before={before} after={after} removed={before != after}")
         self.io.notify("Server removed.")
 
     def _build_credentials(self, identity_id: str) -> Credentials | None:
@@ -299,6 +507,12 @@ class BTSpeakClientRuntime:
         )
 
     def _attempt_connection(self, credentials: Credentials) -> bool:
+        self._current_credentials = credentials
+        self._debug_log(
+            "connect: start "
+            f"identity={credentials.identity_id} server={credentials.server_id} "
+            f"url={credentials.server_url!r} username={credentials.username!r}"
+        )
         self.identity_id = credentials.identity_id
         self.server_id = credentials.server_id
         self.client_options = self.config_manager.get_client_options(self.server_id)
@@ -307,6 +521,14 @@ class BTSpeakClientRuntime:
         self._awaiting_authorization = True
         self._authorize_event.clear()
 
+        self._debug_log("connect: prepare_tls_if_needed")
+        if not self.network.prepare_tls_if_needed(credentials.server_url):
+            self._awaiting_authorization = False
+            self._safe_notify("Connection canceled.")
+            self._debug_log("connect: tls preparation canceled")
+            return False
+
+        self._debug_log("connect: start network thread")
         started = self.network.connect(
             credentials.server_url,
             credentials.username,
@@ -315,26 +537,344 @@ class BTSpeakClientRuntime:
         if not started:
             self._awaiting_authorization = False
             self.io.notify("Failed to start network connection.")
+            self._debug_log("connect: network start failed")
             return False
 
         self.io.notify("Connecting...")
+        self._debug_log("connect: waiting for authorize event")
         authorized = self._authorize_event.wait(timeout=15.0)
         self._awaiting_authorization = False
+        self._debug_log(
+            f"connect: authorize event={authorized!r} success={self._authorize_success!r} connected={self.connected!r}"
+        )
         if not authorized or not self._authorize_success:
             self.network.disconnect(wait=True)
             self.io.notify("Connection failed.")
+            self._debug_log("connect: failed")
             return False
+        self._debug_log("connect: success")
         return True
 
+    def _send_client_options_to_server(self) -> None:
+        if not self.connected:
+            return
+        if not self.server_id:
+            return
+        options = self.config_manager.get_client_options(self.server_id)
+        self.client_options = options
+        self.network.send_packet({"type": "client_options", "options": options})
+
+    @staticmethod
+    def _humanize_option_name(name: str) -> str:
+        return str(name).replace("_", " ").strip().capitalize()
+
+    @staticmethod
+    def _get_nested_mapping(root: dict, path: tuple[str, ...]) -> dict:
+        scope = root
+        for key in path:
+            next_scope = scope.get(key)
+            if not isinstance(next_scope, dict):
+                return {}
+            scope = next_scope
+        return scope
+
+    def _set_client_option_value(self, path: tuple[str, ...], value) -> None:
+        key_path = "/".join(path)
+        if not self.server_id:
+            return
+        self.config_manager.set_client_option(
+            key_path,
+            value,
+            server_id=self.server_id,
+            create_mode=True,
+        )
+        self.client_options = self.config_manager.get_client_options(self.server_id)
+        self._send_client_options_to_server()
+
+    def _edit_scalar_option(self, label: str, current_value):
+        if isinstance(current_value, bool):
+            choice = self._safe_choose(
+                f"{label} is currently {'on' if current_value else 'off'}.",
+                [
+                    ChoiceOption("true", "Set on"),
+                    ChoiceOption("false", "Set off"),
+                    ChoiceOption("back", "Back"),
+                ],
+                default_key="true" if current_value else "false",
+            )
+            if choice == "true":
+                return True
+            if choice == "false":
+                return False
+            return None
+
+        if isinstance(current_value, int):
+            entered = self.io.request_text(label, default=str(current_value))
+            if entered is None:
+                return None
+            entered = entered.strip()
+            if not entered:
+                return None
+            try:
+                return int(entered)
+            except ValueError:
+                self.io.notify("Value must be a number.")
+                return None
+
+        entered = self.io.request_text(label, default=str(current_value))
+        if entered is None:
+            return None
+        return entered
+
+    def _edit_mapping_options(
+        self,
+        *,
+        title: str,
+        root: dict,
+        path: tuple[str, ...],
+        editable: bool,
+        save_callback: Callable[[tuple[str, ...], object], None] | None = None,
+    ) -> None:
+        while self.running:
+            scope = self._get_nested_mapping(root, path)
+            if not scope:
+                self.io.notify("No options available.")
+                return
+
+            option_entries: list[tuple[str, object]] = list(scope.items())
+            options: list[ChoiceOption] = []
+            for key, value in option_entries:
+                label_name = self._humanize_option_name(key)
+                if isinstance(value, dict):
+                    label = f"{label_name}"
+                else:
+                    label = f"{label_name}: {value}"
+                options.append(ChoiceOption(key, label))
+            options.append(ChoiceOption("back", "Back"))
+
+            choice = self._safe_choose(title, options, default_key="back")
+            if not choice or choice == "back":
+                return
+
+            selected_value = scope.get(choice)
+            if isinstance(selected_value, dict):
+                self._edit_mapping_options(
+                    title=self._humanize_option_name(choice),
+                    root=root,
+                    path=path + (choice,),
+                    editable=editable,
+                    save_callback=save_callback,
+                )
+                continue
+
+            if not editable or save_callback is None:
+                self.io.notify("This option is read-only.")
+                continue
+
+            updated = self._edit_scalar_option(self._humanize_option_name(choice), selected_value)
+            if updated is None:
+                continue
+            save_callback(path + (choice,), updated)
+            self.io.notify("Option updated.")
+
+    def _open_client_options_editor(self) -> None:
+        if not self.server_id:
+            self.io.notify("No server selected.")
+            return
+        self.client_options = self.config_manager.get_client_options(self.server_id)
+        self._edit_mapping_options(
+            title="Client options",
+            root=self.client_options,
+            path=(),
+            editable=True,
+            save_callback=self._set_client_option_value,
+        )
+
+    def _open_server_options_viewer(self) -> None:
+        if not self.server_options:
+            self.io.notify("No server options are available.")
+            return
+        self._edit_mapping_options(
+            title="Server options",
+            root=self.server_options,
+            path=(),
+            editable=False,
+            save_callback=None,
+        )
+
+    def _update_options_lists(self, packet: dict) -> bool:
+        if not self.server_id:
+            return False
+        profiles = self.config_manager.profiles
+        defaults = profiles.setdefault("client_options_defaults", {})
+        local_table = defaults.setdefault("local_table", {})
+        creation_defaults = local_table.setdefault("creation_notifications", {})
+        social_defaults = defaults.setdefault("social", {})
+        lang_defaults = social_defaults.setdefault("language_subscriptions", {})
+
+        server_options = profiles.setdefault("server_options", {})
+        server_overrides = server_options.setdefault(self.server_id, {})
+        server_local = server_overrides.setdefault("local_table", {})
+        creation_overrides = server_local.setdefault("creation_notifications", {})
+        server_social = server_overrides.setdefault("social", {})
+        lang_overrides = server_social.setdefault("language_subscriptions", {})
+
+        changed = False
+
+        games = packet.get("games") or []
+        for game in games:
+            name = game.get("name") if isinstance(game, dict) else str(game)
+            if not name:
+                continue
+            if name not in creation_defaults:
+                creation_defaults[name] = True
+                changed = True
+            if name not in creation_overrides:
+                creation_overrides[name] = True
+                changed = True
+
+        languages = packet.get("languages") or {}
+        if isinstance(languages, list):
+            language_names = [str(code) for code in languages]
+        else:
+            language_names = [str(name) for name in languages.values()]
+        if language_names:
+            new_default = {name: lang_defaults.get(name, False) for name in language_names}
+            if list(new_default.keys()) != list(lang_defaults.keys()):
+                social_defaults["language_subscriptions"] = new_default
+                changed = True
+
+            new_override = {name: lang_overrides.get(name, False) for name in language_names}
+            if list(new_override.keys()) != list(lang_overrides.keys()):
+                server_social["language_subscriptions"] = new_override
+                changed = True
+
+        if changed:
+            self.config_manager.save_profiles()
+        return changed
+
+    def _build_menu_context(self) -> tuple[int | None, str | None]:
+        menu_index = None
+        menu_item_id = self.current_menu_selection_id
+
+        if menu_item_id:
+            for index, item in enumerate(self.current_menu_items, start=1):
+                if item.get("id") == menu_item_id:
+                    menu_index = index
+                    break
+
+        if menu_index is None and self.current_menu_position is not None:
+            candidate = self.current_menu_position + 1
+            if 1 <= candidate <= len(self.current_menu_items):
+                menu_index = candidate
+                item_id = self.current_menu_items[candidate - 1].get("id")
+                if item_id:
+                    menu_item_id = item_id
+
+        return menu_index, menu_item_id
+
     def _session_loop(self):
-        self.io.notify("Connected. Enter /help for commands.")
+        self.io.notify("Connected.")
+        waiting_announced = False
         while self.running and self.connected:
+            if isinstance(self.io, BTSpeakIO):
+                if not self.current_menu_items:
+                    if not waiting_announced:
+                        self.io.notify("Connected. Waiting for server menu options.")
+                        waiting_announced = True
+                    action = self._safe_choose(
+                        "Waiting for server menu",
+                        [
+                            ChoiceOption("wait", "Wait"),
+                            ChoiceOption("disconnect", "Back to select server"),
+                        ],
+                        default_key="wait",
+                    )
+                    if action is None:
+                        self.io.notify("Unable to open waiting menu. Returning to server selection.")
+                        self._disconnect_and_stop_audio()
+                        break
+                    if action == "disconnect":
+                        self._disconnect_and_stop_audio()
+                        break
+                    continue
+
+                waiting_announced = False
+                action = self._safe_choose(
+                    "Session options",
+                    [
+                        ChoiceOption("select_command", "Select a command"),
+                        ChoiceOption("client_command", "Client commands"),
+                        ChoiceOption("review_buffer", "Review buffers"),
+                        ChoiceOption("disconnect", "Back to select server"),
+                    ],
+                    default_key="select_command",
+                )
+                if action is None:
+                    self.io.notify("Unable to open session menu. Returning to server selection.")
+                    self._disconnect_and_stop_audio()
+                    break
+                if action == "disconnect":
+                    self._disconnect_and_stop_audio()
+                    break
+                if action == "select_command":
+                    self._select_server_menu_command()
+                    continue
+                if action == "client_command":
+                    command = self._choose_session_command()
+                    if command:
+                        self._handle_user_input(command)
+                    continue
+                if action == "review_buffer":
+                    self._review_buffer()
+                    continue
+
+            self.io.notify("Connected. Enter /help for commands.")
             line = self.io.request_text("Message or command", default="")
             if line is None:
-                self.network.disconnect(wait=True)
-                self.connected = False
+                if isinstance(self.io, BTSpeakIO):
+                    continue
+                self._disconnect_and_stop_audio()
                 break
             self._handle_user_input(line)
+
+    def _choose_session_command(self) -> str | None:
+        choice = self._safe_choose(
+            "Select a client command",
+            [
+                ChoiceOption("ping", "Ping"),
+                ChoiceOption("online", "List online users"),
+                ChoiceOption("online_games", "List online users with games"),
+                ChoiceOption("escape", "Escape current menu"),
+                ChoiceOption("local", "Local chat message"),
+                ChoiceOption("global", "Global chat message"),
+                ChoiceOption("help", "Help"),
+                ChoiceOption("quit", "Quit client"),
+                ChoiceOption("back", "Back"),
+            ],
+            default_key="back",
+        )
+        if choice in (None, "back"):
+            return None
+        if choice in ("local", "global"):
+            text = self.io.request_text("Message text", default="")
+            if not text:
+                return None
+            return f"/{choice} {text}"
+        return f"/{choice}"
+
+    def _disconnect_and_stop_audio(self) -> None:
+        self.network.disconnect(wait=True)
+        self.connected = False
+        self.current_menu_id = None
+        self.current_menu_items = []
+        self.current_menu_selection_id = None
+        self.current_menu_position = None
+        try:
+            self.audio_manager.stop_all_audio()
+        except Exception:
+            self.audio_manager.stop_music()
+            self.audio_manager.stop_ambience()
 
     def _handle_user_input(self, raw_line: str) -> None:
         line = raw_line.strip()
@@ -369,7 +909,7 @@ class BTSpeakClientRuntime:
             return
         if command == "/help":
             self.io.notify(
-                "Commands: /quit /ping /online /online_games /select N /escape /local MSG /global MSG"
+                "Commands: /quit /ping /online /online_games /select N /escape /keybind KEY [ctrl alt shift] /local MSG /global MSG"
             )
             return
         if command == "/ping":
@@ -417,7 +957,36 @@ class BTSpeakClientRuntime:
                 payload["selection_id"] = item_id
             self.network.send_packet(payload)
             return
+        if command in ("/keybind", "/key"):
+            if not rest:
+                self.io.rejected_action()
+                return
+            parts = [part.lower() for part in rest.split() if part]
+            key = parts[0]
+            modifiers = set(parts[1:])
+            menu_index, menu_item_id = self._build_menu_context()
+            payload = {
+                "type": "keybind",
+                "key": key,
+                "control": "ctrl" in modifiers or "control" in modifiers,
+                "alt": "alt" in modifiers,
+                "shift": "shift" in modifiers,
+                "menu_id": self.current_menu_id,
+                "menu_index": menu_index,
+                "menu_item_id": menu_item_id,
+            }
+            self.network.send_packet(payload)
+            return
 
+        if command.startswith("/"):
+            self.network.send_packet(
+                {
+                    "type": "slash_command",
+                    "command": command[1:],
+                    "args": rest,
+                }
+            )
+            return
         self.io.rejected_action()
 
     def add_history(self, text: str, buffer_name: str = "misc") -> None:
@@ -427,12 +996,17 @@ class BTSpeakClientRuntime:
 
     def on_connection_lost(self):
         self.connected = False
+        self.current_menu_id = None
+        self.current_menu_items = []
+        self.current_menu_selection_id = None
+        self.current_menu_position = None
         if self._awaiting_authorization:
             self._authorize_success = False
             self._authorize_event.set()
         self.io.notify("Connection lost.")
 
     def on_authorize_success(self, packet):
+        self._debug_log(f"authorize_success: packet={packet!r}")
         self.connected = True
         if self._awaiting_authorization:
             self._authorize_success = True
@@ -509,19 +1083,18 @@ class BTSpeakClientRuntime:
     def on_server_menu(self, packet):
         self.current_menu_id = packet.get("menu_id")
         self.current_menu_items = []
+        self.current_menu_selection_id = packet.get("selection_id")
+        self.current_menu_position = packet.get("position")
+        self.current_menu_escape_behavior = packet.get("escape_behavior", "keybind")
 
-        rendered = []
         for item in packet.get("items", []):
             if isinstance(item, str):
                 data = {"text": item, "id": None}
             else:
                 data = {"text": item.get("text", ""), "id": item.get("id")}
             self.current_menu_items.append(data)
-            rendered.append(data["text"])
-
-        if rendered:
-            listing = "; ".join(f"{i+1}. {text}" for i, text in enumerate(rendered))
-            self.io.notify(f"Menu {self.current_menu_id}: {listing}")
+        if self.current_menu_items:
+            self.io.notify("Server menu updated. Use Select a command.")
 
     def on_server_request_input(self, packet):
         self.pending_input_id = packet.get("input_id")
@@ -535,6 +1108,7 @@ class BTSpeakClientRuntime:
             read_only=packet.get("read_only", False),
         )
         if response is None:
+            self.pending_input_id = None
             return
 
         self.network.send_packet(
@@ -547,6 +1121,12 @@ class BTSpeakClientRuntime:
         self.pending_input_id = None
 
     def on_server_clear_ui(self, packet):
+        self.current_menu_id = None
+        self.current_menu_items = []
+        self.current_menu_selection_id = None
+        self.current_menu_position = None
+        self.audio_manager.remove_all_playlists()
+        self.audio_manager.stop_all_audio()
         self.io.notify("UI cleared.")
 
     def on_server_game_list(self, packet):
@@ -556,22 +1136,75 @@ class BTSpeakClientRuntime:
 
     def on_server_disconnect(self, packet):
         message = packet.get("message") or "Server requested disconnect."
+        should_reconnect = bool(packet.get("reconnect", False))
+        retry_after = packet.get("retry_after")
+        return_to_login = bool(packet.get("return_to_login", False))
+        status_mode = packet.get("status_mode")
         self.io.notify(message)
         self.connected = False
+        self.current_menu_id = None
+        self.current_menu_items = []
+        self.current_menu_selection_id = None
+        self.current_menu_position = None
+        self.audio_manager.stop_all_audio()
         if self._awaiting_authorization:
             self._authorize_success = False
             self._authorize_event.set()
-        if not packet.get("reconnect", False):
+        if return_to_login:
+            self.io.notify("Disconnected. Returning to identity menu.")
             return
+        if not should_reconnect or not self._current_credentials:
+            return
+        delay_seconds = 3
+        if retry_after is not None:
+            try:
+                delay_seconds = max(1, int(retry_after))
+            except (TypeError, ValueError):
+                delay_seconds = 3
+        if status_mode:
+            self.io.notify(f"Server status is {status_mode}.")
+        self.io.notify(f"Reconnecting in {delay_seconds} seconds...")
+        time.sleep(delay_seconds)
+        if not self.running:
+            return
+        self._authorize_success = False
+        self._awaiting_authorization = True
+        self._authorize_event.clear()
+        started = self.network.connect(
+            self._current_credentials.server_url,
+            self._current_credentials.username,
+            self._current_credentials.password,
+        )
+        if not started:
+            self._awaiting_authorization = False
+            self.io.notify("Reconnect failed.")
+            return
+        self.io.notify("Reconnecting...")
+        authorized = self._authorize_event.wait(timeout=15.0)
+        self._awaiting_authorization = False
+        if not authorized or not self._authorize_success:
+            self.network.disconnect(wait=True)
+            self.io.notify("Reconnect failed.")
+            return
+        self.io.notify("Reconnected.")
 
     def on_update_options_lists(self, packet):
+        self._update_options_lists(packet)
+        self.client_options = self.config_manager.get_client_options(self.server_id)
+        self._send_client_options_to_server()
         self.io.notify("Options lists updated.")
 
     def on_open_client_options(self, packet):
-        self.io.notify("Client options dialog requested (not implemented in BTSpeak client).")
+        packet_options = packet.get("options")
+        if isinstance(packet_options, dict) and packet_options:
+            self.client_options = packet_options
+        self._open_client_options_editor()
+        self._send_client_options_to_server()
 
     def on_open_server_options(self, packet):
-        self.io.notify("Server options dialog requested (not implemented in BTSpeak client).")
+        options = packet.get("options")
+        self.server_options = options if isinstance(options, dict) else {}
+        self._open_server_options_viewer()
 
     def on_table_create(self, packet):
         self.io.notify(f"Table created by {packet.get('host', '')} for {packet.get('game', '')}.")
@@ -587,7 +1220,38 @@ class BTSpeakClientRuntime:
         convo = packet.get("convo", "local")
         sender = packet.get("sender", "")
         message = packet.get("message", "")
-        self.add_history(f"[{convo}] {sender}: {message}", "chats")
+        language = packet.get("language", "Other")
+        social = self.client_options.get("social", {})
+        username = ""
+        if self._current_credentials:
+            username = self._current_credentials.username
+        same_user = bool(sender) and sender == username
+
+        if not same_user:
+            input_language = social.get("chat_input_language", "Other")
+            include_table_filter = bool(social.get("include_language_filters_for_table_chat", False))
+            apply_filter = convo == "global" or (convo == "local" and include_table_filter)
+            if apply_filter and language != input_language:
+                subscriptions = social.get("language_subscriptions", {})
+                if subscriptions and not subscriptions.get(language, False):
+                    return
+
+        should_mute = (
+            (convo == "global" and bool(social.get("mute_global_chat", False)))
+            or (convo == "local" and bool(social.get("mute_table_chat", False)))
+        )
+
+        text = f"[{convo}] {sender}: {message}"
+        self.buffer_system.add_item("chats", text)
+        if should_mute and not same_user:
+            return
+
+        sound_name = "chatlocal.ogg" if convo == "local" else "chat.ogg"
+        self.audio_manager.play_sound(sound_name)
+        if username and username.lower() in message.lower():
+            self.audio_manager.play_sound("mention.ogg")
+        if not self.buffer_system.is_muted("chats"):
+            self.io.notify(text)
 
     def on_server_status(self, packet):
         mode = packet.get("mode", "unknown")
