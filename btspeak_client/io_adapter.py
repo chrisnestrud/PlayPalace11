@@ -177,20 +177,24 @@ class BTSpeakIO(IOAdapter):
         if choice is None:
             return None
 
-        # Resolve by returned label first for robustness across dialog backends.
+        # Resolve by numeric key first. Some environments return 0-based
+        # indices, others return 1-based indices.
+        try:
+            index = int(choice.key)
+        except (TypeError, ValueError):
+            index = None
+        if index is not None:
+            if 0 <= index < len(options):
+                return options[index].key
+            if 1 <= index <= len(options):
+                return options[index - 1].key
+
+        # Fall back to returned label for backends that don't provide indices.
         selected_label = getattr(choice, "label", None)
         if isinstance(selected_label, str):
             for option in options:
                 if option.label == selected_label:
                     return option.key
-
-        # Fall back to numeric key. Some environments return 0-based indices,
-        # others return 1-based indices.
-        index = int(choice.key)
-        if 0 <= index < len(options):
-            return options[index].key
-        if 1 <= index <= len(options):
-            return options[index - 1].key
         return None
 
     def request_text(

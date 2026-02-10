@@ -124,12 +124,16 @@ class BTSpeakClientRuntime:
         email = self.io.request_text("Email (optional)", default="") or ""
         notes = self.io.request_text("Notes (optional)", default="") or ""
 
-        identity_id = self.config_manager.add_identity(
-            username=username,
-            password=password,
-            email=email,
-            notes=notes,
-        )
+        try:
+            identity_id = self.config_manager.add_identity(
+                username=username,
+                password=password,
+                email=email,
+                notes=notes,
+            )
+        except ValueError as exc:
+            self.io.notify(str(exc))
+            return
         self.config_manager.set_last_identity(identity_id)
         self.io.notify("Identity added.")
 
@@ -159,16 +163,19 @@ class BTSpeakClientRuntime:
             self.io.notify("No identities available.")
             return None
 
-        last_identity = self.config_manager.get_last_identity_id()
         options = []
         for identity_id, identity in identities.items():
             username = identity.get("username", "Unknown")
             email = identity.get("email", "")
-            label = f"{username} ({email})" if email else username
+            suffix = identity_id.split("-")[0] + "-" + identity_id.split("-")[-1][:8]
+            if email:
+                label = f"{username} ({email}) [{suffix}]"
+            else:
+                label = f"{username} [{suffix}]"
             options.append(ChoiceOption(identity_id, label))
         options.append(ChoiceOption("back", "Back"))
 
-        choice = self.io.choose(prompt, options, default_key=last_identity)
+        choice = self.io.choose(prompt, options)
         if not choice or choice == "back":
             return None
         return choice
@@ -238,7 +245,6 @@ class BTSpeakClientRuntime:
             self.io.notify("No servers available.")
             return None
 
-        last_server = self.config_manager.get_last_server_id()
         options = []
         for server_id, server in servers.items():
             name = server.get("name", "Unknown Server")
@@ -246,7 +252,7 @@ class BTSpeakClientRuntime:
             port = server.get("port", 8000)
             options.append(ChoiceOption(server_id, f"{name} ({host}:{port})"))
         options.append(ChoiceOption("back", "Back"))
-        choice = self.io.choose(prompt, options, default_key=last_server)
+        choice = self.io.choose(prompt, options)
         if not choice or choice == "back":
             return None
         return choice

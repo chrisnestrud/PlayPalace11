@@ -414,6 +414,10 @@ class ConfigManager:
         notes: str = "",
     ) -> str:
         """Add a new global identity and return its ID."""
+        target = username.strip().casefold()
+        for existing in self.get_all_identities().values():
+            if str(existing.get("username", "")).strip().casefold() == target:
+                raise ValueError("An identity with that username already exists.")
         identity = Identity(username=username, password=password, email=email, notes=notes)
         self.identities.setdefault("identities", {})
         self.identities["identities"][identity.identity_id] = identity.model_dump()
