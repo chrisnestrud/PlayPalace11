@@ -1876,29 +1876,46 @@ class MainWindow(wx.Frame):
         - If lists are same length, generate update operations for changed items
         - Otherwise use LCS-based diff for structural changes
         """
-        # Check if we can use ID-based diffing (all items have IDs)
-        if (old_ids is not None and new_ids is not None and
-            len(old_ids) == len(old_items) and len(new_ids) == len(new_items) and
-            all(item_id is not None for item_id in old_ids) and
-            all(item_id is not None for item_id in new_ids)):
-            # Use simpler ID-based algorithm
+        if self._can_use_id_diff(old_items, new_items, old_ids, new_ids):
             return self.compute_menu_diff_by_id(old_items, new_items, old_ids, new_ids)
 
         # Fall back to text-based LCS algorithm
         operations = []
 
-        # Simple case: same length, just update changed items
-        if len(old_items) == len(new_items):
-            for i in range(len(old_items)):
-                if old_items[i] != new_items[i]:
-                    operations.append(("update", i, new_items[i]))
-            return operations
+        same_length_ops = self._diff_same_length(old_items, new_items)
+        if same_length_ops is not None:
+            return same_length_ops
 
-        # Different lengths: use LCS algorithm for structural changes
+        operations = self._diff_with_lcs(old_items, new_items)
+
+        return operations
+
+    @staticmethod
+    def _can_use_id_diff(old_items, new_items, old_ids, new_ids) -> bool:
+        return (
+            old_ids is not None
+            and new_ids is not None
+            and len(old_ids) == len(old_items)
+            and len(new_ids) == len(new_items)
+            and all(item_id is not None for item_id in old_ids)
+            and all(item_id is not None for item_id in new_ids)
+        )
+
+    @staticmethod
+    def _diff_same_length(old_items, new_items):
+        if len(old_items) != len(new_items):
+            return None
+        operations = []
+        for i in range(len(old_items)):
+            if old_items[i] != new_items[i]:
+                operations.append(("update", i, new_items[i]))
+        return operations
+
+    @staticmethod
+    def _diff_with_lcs(old_items, new_items):
         m, n = len(old_items), len(new_items)
         lcs = [[0] * (n + 1) for _ in range(m + 1)]
 
-        # Fill LCS table
         for i in range(1, m + 1):
             for j in range(1, n + 1):
                 if old_items[i - 1] == new_items[j - 1]:
@@ -1906,22 +1923,18 @@ class MainWindow(wx.Frame):
                 else:
                     lcs[i][j] = max(lcs[i - 1][j], lcs[i][j - 1])
 
-        # Backtrack to generate operations
+        operations = []
         i, j = m, n
         while i > 0 or j > 0:
             if i > 0 and j > 0 and old_items[i - 1] == new_items[j - 1]:
-                # Items match - no operation needed
                 i -= 1
                 j -= 1
             elif j > 0 and (i == 0 or lcs[i][j - 1] >= lcs[i - 1][j]):
-                # Insert new item
                 operations.insert(0, ("insert", j - 1, new_items[j - 1]))
                 j -= 1
             else:
-                # Delete old item
                 operations.insert(0, ("delete", i - 1))
                 i -= 1
-
         return operations
 
     def apply_menu_diff(self, operations, old_selection):
