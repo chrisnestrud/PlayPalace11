@@ -3,11 +3,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+VENDOR_DIR="${SCRIPT_DIR}/vendor"
 
 cd "${REPO_ROOT}"
+mkdir -p "${VENDOR_DIR}"
+export PYTHONPATH="${VENDOR_DIR}:/BTSpeak/Python:${PYTHONPATH:-}"
 
-if command -v uv >/dev/null 2>&1; then
-  exec uv run --project "${REPO_ROOT}/btspeak_client" python -m btspeak_client.client
+if ! python3 -c "import websockets" >/dev/null 2>&1; then
+  python3 -m pip install --quiet --target "${VENDOR_DIR}" websockets
 fi
 
 exec python3 -m btspeak_client.client

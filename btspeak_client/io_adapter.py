@@ -138,6 +138,11 @@ class BTSpeakIO(IOAdapter):
     def __init__(self):
         from BTSpeak import dialogs, host
 
+        # Ensure BTSpeak helper commands resolve against the BTSpeak installation,
+        # not this git repository.
+        if hasattr(host, "_repositoryRoot"):
+            host._repositoryRoot = "/BTSpeak"
+
         self._dialogs = dialogs
         self._host = host
 
