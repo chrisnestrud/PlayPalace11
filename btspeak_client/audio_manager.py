@@ -17,6 +17,8 @@ class AudioManager:
         self._playlists: dict[str, dict] = {}
         self._current_music: str | None = None
         self._current_ambience: str | None = None
+        self._music_volume: int | None = None
+        self._ambience_volume: int | None = None
         self._ffplay_path = shutil.which("ffplay")
         self._sound_processes: list[subprocess.Popen] = []
 
@@ -148,6 +150,8 @@ class AudioManager:
         ok = self._run_vlc_command([path], loop=looping, wait=False)
         if ok:
             self._current_music = path
+            if self._music_volume is not None:
+                self._apply_volume(self._music_volume)
         return ok
 
     def stop_music(self) -> None:
@@ -174,6 +178,8 @@ class AudioManager:
         ok = self._run_vlc_command(files, loop=True, wait=False)
         if ok:
             self._current_ambience = loop_path
+            if self._ambience_volume is not None:
+                self._apply_volume(self._ambience_volume)
         return ok
 
     def stop_ambience(self) -> None:
@@ -182,6 +188,25 @@ class AudioManager:
         self._vlc.send_command("stop")
         self._vlc.send_command("clear")
         self._current_ambience = None
+
+    def _apply_volume(self, volume: int) -> None:
+        if not self._vlc:
+            return
+        clamped = self._clamp(volume, 0, 200)
+        try:
+            self._vlc.send_command(f"volume {clamped}")
+        except Exception:
+            pass
+
+    def set_music_volume(self, volume: int) -> None:
+        self._music_volume = self._clamp(volume, 0, 200)
+        if self._current_music:
+            self._apply_volume(self._music_volume)
+
+    def set_ambience_volume(self, volume: int) -> None:
+        self._ambience_volume = self._clamp(volume, 0, 200)
+        if self._current_ambience:
+            self._apply_volume(self._ambience_volume)
 
     def add_playlist(
         self,

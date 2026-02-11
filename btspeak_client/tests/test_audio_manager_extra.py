@@ -96,3 +96,33 @@ def test_stop_all_audio_terminates_processes(monkeypatch):
     assert "music" in terminated
     assert "ambience" in terminated
     assert len([t for t in terminated if t == "yes"]) == 2
+
+
+def test_set_music_volume_applies_when_playing():
+    am = AudioManager()
+    calls = []
+
+    class FakeVLC:
+        def send_command(self, command):
+            calls.append(command)
+
+    am._vlc = FakeVLC()
+    am._current_music = "/tmp/music.ogg"
+
+    am.set_music_volume(120)
+    assert calls[-1] == "volume 120"
+
+
+def test_set_ambience_volume_applies_when_playing():
+    am = AudioManager()
+    calls = []
+
+    class FakeVLC:
+        def send_command(self, command):
+            calls.append(command)
+
+    am._vlc = FakeVLC()
+    am._current_ambience = "/tmp/ambience.ogg"
+
+    am.set_ambience_volume(80)
+    assert calls[-1] == "volume 80"
