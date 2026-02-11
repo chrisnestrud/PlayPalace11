@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from btspeak_client.io_adapter import BTSpeakIO, ChoiceOption
+from pathlib import Path
 
 
 class FakeDialogs:
@@ -21,6 +22,7 @@ def make_io_with_result(result):
     io = BTSpeakIO.__new__(BTSpeakIO)
     io._dialogs = FakeDialogs(result)
     io._host = object()
+    io._debug_log_path = Path("/tmp/btspeak_client_test.log")
     return io
 
 
