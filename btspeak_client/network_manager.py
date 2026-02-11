@@ -70,6 +70,27 @@ class NetworkManager:
         if callable(add_history):
             self._defer(add_history, message, "activity")
 
+    def _debug(self, message: str) -> None:
+        debug_log = getattr(self.event_handler, "_debug_log", None)
+        if callable(debug_log):
+            self._defer(debug_log, message)
+
+    def _format_packet_for_debug(self, packet: dict, *, max_len: int = 400) -> str:
+        redacted_keys = {"password", "token", "auth", "authorization"}
+        scrubbed: dict = {}
+        for key, value in packet.items():
+            if key in redacted_keys:
+                scrubbed[key] = "***"
+            else:
+                scrubbed[key] = value
+        try:
+            rendered = json.dumps(scrubbed, ensure_ascii=True, default=str)
+        except Exception:
+            rendered = repr(scrubbed)
+        if len(rendered) > max_len:
+            rendered = rendered[: max_len - 3] + "..."
+        return rendered
+
     def _validate_outgoing_packet(self, packet: dict) -> bool:
         try:
             validate_outgoing(packet)
@@ -134,28 +155,41 @@ class NetworkManager:
     async def _connect_and_listen(self, server_url, username, password):
         websocket = None
         try:
+            self._debug(f"net: opening connection url={server_url!r}")
             websocket = await self._open_connection(server_url)
             self.ws = websocket
             self.connected = True
 
+            self._debug("net: sending authorize packet")
             await self._send_authorize(websocket, username, password)
 
             while not self.should_stop:
                 try:
                     message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
-                    packet = json.loads(message)
+                    try:
+                        packet = json.loads(message)
+                    except json.JSONDecodeError as exc:
+                        self._debug(f"net: invalid json from server: {exc!r}")
+                        raise
                     self._defer(self._handle_packet, packet)
                 except asyncio.TimeoutError:
                     continue
-                except websockets.exceptions.ConnectionClosed:
+                except websockets.exceptions.ConnectionClosed as exc:
+                    self._debug(
+                        "net: connection closed "
+                        f"code={getattr(exc, 'code', None)!r} "
+                        f"reason={getattr(exc, 'reason', None)!r}"
+                    )
                     break
         except TLSUserDeclinedError:
             self._emit_activity("TLS certificate was not trusted; connection aborted.")
+            self._debug("net: tls certificate not trusted")
         except Exception:
             import traceback
 
             traceback.print_exc()
         finally:
+            self._debug(f"net: closing connection should_stop={self.should_stop!r}")
             self.connected = False
             self.ws = None
             if websocket:
@@ -183,17 +217,21 @@ class NetworkManager:
 
     async def _open_connection(self, server_url: str):
         if not server_url.startswith("wss://"):
+            self._debug("net: using insecure websocket (ws)")
             return await connect(server_url)
 
         trust_entry = self._get_trusted_certificate_entry()
         if trust_entry:
+            self._debug("net: using stored trusted certificate")
             return await self._connect_with_trusted_certificate(server_url, trust_entry)
 
         try:
+            self._debug("net: trying default TLS verification")
             websocket = await connect(server_url, ssl=self._build_default_ssl_context())
             await self._verify_pinned_certificate(websocket)
             return websocket
         except ssl.SSLCertVerificationError:
+            self._debug("net: default TLS verification failed")
             raise TLSUserDeclinedError()
 
     def _build_default_ssl_context(self) -> ssl.SSLContext:
@@ -437,6 +475,11 @@ class NetworkManager:
             return False
 
         try:
+            self._debug(
+                "net: send packet "
+                f"type={packet.get('type')!r} "
+                f"payload={self._format_packet_for_debug(packet)}"
+            )
             message = json.dumps(packet)
             asyncio.run_coroutine_threadsafe(self.ws.send(message), self.loop)
             return True
@@ -455,6 +498,11 @@ class NetworkManager:
             return
 
         packet_type = packet.get("type")
+        self._debug(
+            "net: recv packet "
+            f"type={packet_type!r} "
+            f"payload={self._format_packet_for_debug(packet)}"
+        )
 
         handlers = {
             "authorize_success": "on_authorize_success",
