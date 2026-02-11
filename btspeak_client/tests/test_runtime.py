@@ -480,7 +480,7 @@ def test_session_loop_btspeak_select_command_uses_options_list(monkeypatch):
     assert "client_options" in session_options[0]
     assert "review_buffer" in session_options[0]
     assert "client_commands" in session_options[0]
-    assert "disconnect" in session_options[0]
+    assert session_options[0][-1] == "disconnect"
 
 
 def test_session_menu_hides_disconnect_when_logout_present(monkeypatch):
@@ -508,6 +508,35 @@ def test_session_menu_hides_disconnect_when_logout_present(monkeypatch):
     session_options = [options for prompt, options in io.option_history if prompt == "Session options"]
     assert session_options
     assert "disconnect" not in session_options[0]
+
+
+def test_session_menu_orders_back_before_logout(monkeypatch):
+    io = FakeIO(choices=["menu:1"])
+    runtime, _, _ = make_runtime(io)
+    runtime.connected = True
+    runtime.running = True
+    runtime.current_menu_id = "main"
+    runtime.current_menu_items = [
+        {"text": "Play", "id": "play"},
+        {"text": "Logout", "id": "logout"},
+        {"text": "Back", "id": "back"},
+    ]
+
+    import btspeak_client.runtime as runtime_mod
+
+    monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
+
+    def fake_sleep(_seconds):
+        runtime.running = False
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+
+    runtime._session_loop()
+
+    session_options = [options for prompt, options in io.option_history if prompt == "Session options"]
+    assert session_options
+    assert session_options[0][-2] == "back"
+    assert session_options[0][-1] == "menu:2"
 
 
 def test_table_menu_adds_key_help(monkeypatch):

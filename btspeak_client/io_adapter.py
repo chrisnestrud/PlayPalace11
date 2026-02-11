@@ -273,26 +273,6 @@ class BTSpeakIO(IOAdapter):
             return default
 
         if self._use_dialogs_api and hasattr(self._dialogs, "requestInput"):
-            if multiline and hasattr(self._dialogs, "editFile"):
-                try:
-                    fd, path = tempfile.mkstemp(prefix="btspeak_input_", suffix=".txt")
-                    try:
-                        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                            if default:
-                                handle.write(default)
-                        edited = self._dialogs.editFile(file_path=path, title=prompt)
-                        if not edited:
-                            return None
-                        with open(edited, "r", encoding="utf-8") as handle:
-                            return handle.read()
-                    finally:
-                        try:
-                            Path(path).unlink(missing_ok=True)
-                        except BaseException:
-                            pass
-                except BaseException as exc:
-                    self._debug_log(f"dialog: requestInput multiline failed exc={exc!r}")
-                    return None
             try:
                 value = self._dialogs.requestInput(
                     prompt,

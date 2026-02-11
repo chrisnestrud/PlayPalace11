@@ -86,15 +86,10 @@ def test_btspeak_request_text_with_dialogs(monkeypatch, tmp_path):
     assert io.request_text("Prompt", default="") == "result"
 
 
-def test_btspeak_request_text_multiline_edit_file(monkeypatch, tmp_path):
+def test_btspeak_request_text_multiline_uses_request_input(monkeypatch, tmp_path):
     class FakeDialogs:
-        def editFile(self, file_path=None, title=None):
-            edited_path = tmp_path / "edited.txt"
-            edited_path.write_text("edited content", encoding="utf-8")
-            return str(edited_path)
-
         def requestInput(self, *args, **kwargs):
-            return "ignored"
+            return "multi line"
 
     io = BTSpeakIO.__new__(BTSpeakIO)
     io._dialogs = FakeDialogs()
@@ -103,7 +98,7 @@ def test_btspeak_request_text_multiline_edit_file(monkeypatch, tmp_path):
     io._host = object()
 
     result = io.request_text("Prompt", default="seed", multiline=True)
-    assert result == "edited content"
+    assert result == "multi line"
 
 
 def test_btspeak_show_message_uses_dialog(monkeypatch, tmp_path):

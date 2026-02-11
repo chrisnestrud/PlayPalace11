@@ -62,6 +62,7 @@ class BTSpeakClientRuntime:
         self._last_buffer_choice: str = "all"
         self._menu_version: int = 0
         self._menu_refresh_requested: bool = True
+        self._last_menu_choice_by_id: dict[str, str] = {}
 
         self.client_options: dict = {}
         self.server_options: dict = {}
@@ -192,6 +193,14 @@ class BTSpeakClientRuntime:
                 return True
         return False
 
+    def _menu_has_back(self) -> bool:
+        for item in self.current_menu_items:
+            item_id = str(item.get("id") or "").strip().lower()
+            text = str(item.get("text") or "").strip().lower()
+            if item_id == "back" or text == "back":
+                return True
+        return False
+
     def _is_table_menu(self) -> bool:
         menu_id = (self.current_menu_id or "").lower()
         return "turn_menu" in menu_id or "table_menu" in menu_id
@@ -219,6 +228,45 @@ class BTSpeakClientRuntime:
     def _show_key_help(self) -> None:
         body = self._build_key_emulation_help()
         self.io.view_long_text("Key emulation help", body)
+
+    def _build_ordered_session_options(self) -> list[ChoiceOption]:
+        menu_options = self._format_menu_choice_options()
+        back_option = None
+        logout_option = None
+        for option in list(menu_options):
+            if option.key == "back":
+                back_option = option
+                menu_options.remove(option)
+                break
+        for option in list(menu_options):
+            if option.key.startswith("menu:"):
+                index = int(option.key.split(":", 1)[1])
+                item = self.current_menu_items[index - 1]
+                item_id = str(item.get("id") or "").strip().lower()
+                text = str(item.get("text") or "").strip().lower()
+                if item_id in {"logout", "log_out", "log-out"} or "logout" in text or "log out" in text:
+                    logout_option = option
+                    menu_options.remove(option)
+                    break
+
+        extras = [
+            ChoiceOption("client_options", "Client options, o"),
+            ChoiceOption("review_buffer", "Review buffers, b"),
+            ChoiceOption("client_commands", "Client commands, c"),
+            ChoiceOption("key_help", "Key emulation help, h"),
+        ]
+        if self._is_table_menu():
+            extras.append(ChoiceOption("table_help", "Table key help (H-chord), h"))
+
+        combined = list(menu_options) + extras
+
+        if back_option:
+            combined.append(back_option)
+        if logout_option:
+            combined.append(logout_option)
+        elif not self._menu_has_logout():
+            combined.append(ChoiceOption("disconnect", "Log out, z"))
+        return combined
 
     @staticmethod
     def _format_choice_options_with_hotkeys(options: list[ChoiceOption]) -> list[ChoiceOption]:
@@ -1141,22 +1189,19 @@ class BTSpeakClientRuntime:
                 )
                 menu_version = self._menu_version
                 self._menu_refresh_requested = False
-                server_options = self._format_menu_choice_options()
-                if server_options and server_options[-1].key == "back":
-                    server_options = server_options[:-1]
-                combined_options = list(server_options) + [
-                    ChoiceOption("client_options", "Client options, o"),
-                    ChoiceOption("review_buffer", "Review buffers, b"),
-                    ChoiceOption("client_commands", "Client commands, c"),
-                ]
-                if self._is_table_menu():
-                    combined_options.append(ChoiceOption("table_help", "Table key help (H-chord), h"))
-                if not self._menu_has_logout():
-                    combined_options.append(ChoiceOption("disconnect", "Log out, z"))
+                combined_options = self._build_ordered_session_options()
+                default_choice = None
+                if self.current_menu_id:
+                    default_choice = self._last_menu_choice_by_id.get(self.current_menu_id)
+                if default_choice is None:
+                    for option in combined_options:
+                        if option.key.startswith("menu:"):
+                            default_choice = option.key
+                            break
                 action = self._safe_choose(
                     "Session options",
                     combined_options,
-                    default_key=last_session_choice or "client_options",
+                    default_key=default_choice or last_session_choice,
                     show_cancel=False,
                 )
                 if action is None:
@@ -1172,6 +1217,8 @@ class BTSpeakClientRuntime:
                 menu_failures = 0
                 if action.startswith("menu:"):
                     last_session_choice = action
+                    if self.current_menu_id:
+                        self._last_menu_choice_by_id[self.current_menu_id] = action
                     last_menu_version_shown = menu_version
                     selection = int(action.split(":", 1)[1])
                     self._send_menu_selection(selection)
@@ -1197,10 +1244,19 @@ class BTSpeakClientRuntime:
                         self._handle_user_input(command)
                     self._menu_refresh_requested = True
                     continue
+                if action == "key_help":
+                    last_session_choice = action
+                    self._show_key_help()
+                    self._menu_refresh_requested = True
+                    last_menu_version_shown = menu_version
+                    time.sleep(0.2)
+                    continue
                 if action == "table_help":
                     last_session_choice = action
                     self._show_key_help()
                     self._menu_refresh_requested = True
+                    last_menu_version_shown = menu_version
+                    time.sleep(0.2)
                     continue
 
             self.io.notify("Connected. Enter /help for commands.")
