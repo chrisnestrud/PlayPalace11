@@ -460,6 +460,10 @@ def test_session_loop_btspeak_select_command_uses_options_list(monkeypatch):
     runtime.audio_manager = AudioStopStub()
 
     def fake_sleep(_seconds):
+        runtime._menu_refresh_requested = True
+        runtime._menu_version += 1
+        if io.choices:
+            return
         runtime.running = False
 
     monkeypatch.setattr(time, "sleep", fake_sleep)
@@ -499,6 +503,10 @@ def test_session_menu_hides_disconnect_when_logout_present(monkeypatch):
     monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
 
     def fake_sleep(_seconds):
+        runtime._menu_refresh_requested = True
+        runtime._menu_version += 1
+        if io.choices:
+            return
         runtime.running = False
 
     monkeypatch.setattr(time, "sleep", fake_sleep)
@@ -527,6 +535,10 @@ def test_session_menu_orders_back_before_logout(monkeypatch):
     monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
 
     def fake_sleep(_seconds):
+        runtime._menu_refresh_requested = True
+        runtime._menu_version += 1
+        if io.choices:
+            return
         runtime.running = False
 
     monkeypatch.setattr(time, "sleep", fake_sleep)
@@ -537,6 +549,38 @@ def test_session_menu_orders_back_before_logout(monkeypatch):
     assert session_options
     assert session_options[0][-2] == "back"
     assert session_options[0][-1] == "menu:2"
+
+
+def test_session_menu_defaults_to_previous_selection(monkeypatch):
+    io = FakeIO(choices=["menu:2", "menu:2"])
+    runtime, _, _ = make_runtime(io)
+    runtime.connected = True
+    runtime.running = True
+    runtime.current_menu_id = "main"
+    runtime.current_menu_items = [
+        {"text": "Play", "id": "play"},
+        {"text": "Options", "id": "options"},
+    ]
+
+    import btspeak_client.runtime as runtime_mod
+
+    monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
+
+    def fake_sleep(_seconds):
+        runtime._menu_refresh_requested = True
+        runtime._menu_version += 1
+        if io.choices:
+            return
+        runtime.running = False
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+
+    runtime._session_loop()
+
+    defaults = [default for prompt, default in io.default_history if prompt == "Session options"]
+    assert defaults
+    assert defaults[0] == "menu:1"
+    assert defaults[-1] == "menu:2"
 
 
 def test_table_menu_adds_key_help(monkeypatch):
