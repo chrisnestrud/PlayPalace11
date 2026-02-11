@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-
 import btspeak_client.audio_manager as audio_mod
 from btspeak_client.audio_manager import AudioManager
 

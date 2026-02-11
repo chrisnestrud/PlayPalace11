@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from getpass import getpass
-import tempfile
 from pathlib import Path
 from typing import Sequence
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -177,8 +177,8 @@ class BTSpeakIO(IOAdapter):
             timestamp = datetime.now().isoformat()
             with self._debug_log_path.open("a", encoding="utf-8") as fh:
                 fh.write(f"[{timestamp}] {message}\n")
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("Unable to write BTSpeak debug log: %s", exc)
 
     def speak(self, text: str, *, interrupt: bool = False) -> None:
         self._host.say(text, immediate=interrupt)

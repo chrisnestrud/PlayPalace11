@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import shutil
 import subprocess
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 class AudioManager:
@@ -195,8 +199,8 @@ class AudioManager:
         clamped = self._clamp(volume, 0, 200)
         try:
             self._vlc.send_command(f"volume {clamped}")
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - VLC exceptions are opaque; log and continue
+            logger.debug("Failed to send VLC volume command: %s", exc)
 
     def set_music_volume(self, volume: int) -> None:
         self._music_volume = self._clamp(volume, 0, 200)
@@ -267,6 +271,6 @@ class AudioManager:
         for process in self._sound_processes:
             try:
                 process.terminate()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("Failed to terminate sound subprocess %s: %s", process, exc)
         self._sound_processes = []

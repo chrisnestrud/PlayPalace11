@@ -7,73 +7,90 @@ Handles client-side configuration including:
 """
 
 import json
-import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-from datetime import datetime
+from typing import Dict, Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from .config_schemas import Identity, Identities, Server, UserAccount, validate_identities
 
-def get_item_from_dict(dictionary: dict, key_path: (str, tuple), *, create_mode: bool= False):
+TABLE_SECURITY_MODE_NEVER = "never"
+TABLE_SECURITY_DEFAULT_TEXT = ""
+
+
+def _normalize_key_path(key_path: str | tuple[str, ...] | list[str]) -> list[str]:
+  """Convert path inputs into a sanitized list of keys."""
+  if isinstance(key_path, str):
+    working = key_path
+    if working and working[0] == "/":
+      working = working[1:]
+    if working and working[-1] == "/":
+      working = working[:-1]
+    if not working:
+      return []
+    return [segment for segment in working.split("/") if segment != ""]
+  return [segment for segment in key_path if segment != ""]
+
+
+def get_item_from_dict(dictionary: dict, key_path: (str, tuple), *, create_mode: bool = False):
   """Return the item in a dictionary, typically a nested layer dict.
   Optionally create keys that don't exist, or require the full path to exist already.
   This function supports an infinite number of layers."""
-  if isinstance(key_path, str)  and len(key_path)>0:
-    if key_path[0] == "/": key_path = key_path[1:]
-    if key_path[-1] == "/": key_path = key_path[:-1]
-    key_path = key_path.split("/")
-  scope= dictionary
-  for l in range(len(key_path)):
-    if key_path[l] == "": continue
-    layer= key_path[l]
+  normalized_path = _normalize_key_path(key_path)
+  scope = dictionary
+  for index, segment in enumerate(normalized_path):
+    layer = segment
     if layer not in scope:
-      if not create_mode: raise KeyError(f"Key '{layer}' not in "+ (("nested dictionary "+ '/'.join(key_path[:l])) if l>0 else "root dictionary")+ ".")
+      if not create_mode:
+        prefix = "/".join(normalized_path[:index]) if index > 0 else "root dictionary"
+        raise KeyError(f"Key '{layer}' not in {prefix}.")
       scope[layer] = {}
-    scope= scope[layer]
+    scope = scope[layer]
   return scope
 
-def set_item_in_dict(dictionary: dict, key_path: (str, tuple), value, *, create_mode: bool= False) -> bool:
+
+def set_item_in_dict(dictionary: dict, key_path: (str, tuple), value, *, create_mode: bool = False) -> bool:
   """Modify the value of an item in a dictionary.
   Optionally create keys that don't exist, or require the full path to exist already.
   This function supports an infinite number of layers."""
-  if isinstance(key_path, str) and len(key_path)>0:
-    if key_path[0] == "/": key_path = key_path[1:]
-    if key_path[-1] == "/": key_path = key_path[:-1]
-    key_path = key_path.split("/")
-  if not key_path or key_path[-1] == "": raise ValueError("No dictionary key path was specified.")
-  final_key = key_path.pop(-1)
-  obj = get_item_from_dict(dictionary, key_path, create_mode = create_mode)
-  if not isinstance(obj, dict): raise TypeError(f"Expected type 'dict', instead got '{type(obj)}'.")
-  if not create_mode and final_key not in obj: raise KeyError(f"Key '{final_key}' not in dictionary '{key_path}'.")
+  normalized_path = _normalize_key_path(key_path)
+  if not normalized_path:
+    raise ValueError("No dictionary key path was specified.")
+  final_key = normalized_path.pop(-1)
+  obj = get_item_from_dict(dictionary, normalized_path, create_mode=create_mode)
+  if not isinstance(obj, dict):
+    raise TypeError(f"Expected type 'dict', instead got '{type(obj)}'.")
+  if not create_mode and final_key not in obj:
+    raise KeyError(f"Key '{final_key}' not in dictionary '{normalized_path}'.")
   obj[final_key] = value
   return True
+
 
 def delete_item_from_dict(dictionary: dict, key_path: (str, tuple), *, delete_empty_layers: bool = True) -> bool:
   """Delete an item in a dictionary.
   Optionally delete layers that are empty.
   This function supports an infinite number of layers."""
-  if isinstance(key_path, str) and len(key_path)>0:
-    if key_path[0] == "/": key_path = key_path[1:]
-    if key_path[-1] == "/": key_path = key_path[:-1]
-    key_path = key_path.split("/")
-  if not key_path or key_path[-1] == "": raise ValueError("No dictionary key path was specified.")
-  final_key = key_path.pop(-1)
-  obj = get_item_from_dict(dictionary, key_path)
-  if not isinstance(obj, dict): raise TypeError(f"Expected type 'dict', instead got '{type(obj)}'.")
-  if final_key not in obj: return False
+  normalized_path = _normalize_key_path(key_path)
+  if not normalized_path:
+    raise ValueError("No dictionary key path was specified.")
+  final_key = normalized_path.pop(-1)
+  obj = get_item_from_dict(dictionary, normalized_path)
+  if not isinstance(obj, dict):
+    raise TypeError(f"Expected type 'dict', instead got '{type(obj)}'.")
+  if final_key not in obj:
+    return False
   del obj[final_key]
-  if not delete_empty_layers: return True
+  if not delete_empty_layers:
+    return True
   # Walk from deepest to shallowest, removing empty dicts
-  for i in range(len(key_path), 0, -1):
+  for depth in range(len(normalized_path), 0, -1):
     try:
-      obj = get_item_from_dict(dictionary, key_path[:i])
-      if isinstance(obj, dict) and not obj:  # Empty dict
-        if i == 1:
-          del dictionary[key_path[0]]
+      current = get_item_from_dict(dictionary, normalized_path[:depth])
+      if isinstance(current, dict) and not current:
+        if depth == 1:
+          del dictionary[normalized_path[0]]
         else:
-          parent = get_item_from_dict(dictionary, key_path[:i-1])
-          del parent[key_path[i-1]]
+          parent = get_item_from_dict(dictionary, normalized_path[:depth - 1])
+          del parent[normalized_path[depth - 1]]
     except KeyError:
       break
   return True
@@ -234,137 +251,97 @@ class ConfigManager:
                 },
                 "local_table": {
                     "start_as_visible": "always",
-                    "start_with_password": "never",
-                    "default_password_text": "",
-                    "creation_notifications": {}},  # Will be populated dynamically
+                    "start_with_password": TABLE_SECURITY_MODE_NEVER,
+                    "default_password_text": TABLE_SECURITY_DEFAULT_TEXT,
+                    "creation_notifications": {},
+                },  # Will be populated dynamically
             },
             "server_options": {},  # server_id -> options_overrides dict
         }
 
     def _migrate_profiles(self, profiles: Dict[str, Any]) -> Dict[str, Any]:
-        """Migrate profiles to fix data issues.
-
-        Args:
-            profiles: The loaded profiles dictionary
-
-        Returns:
-            Migrated profiles dictionary
-        """
+        """Migrate profiles to fix data issues."""
+        migrations = (
+            self._migrate_servers_structure,
+            self._migrate_language_settings,
+            self._migrate_table_creations,
+        )
         needs_save = False
-
-        # Migration: Convert old "servers" structure to "server_options"
-        if "servers" in profiles and "server_options" not in profiles:
-            profiles["server_options"] = {}
-            for server_id, server_info in profiles["servers"].items():
-                if "options_overrides" in server_info and server_info["options_overrides"]:
-                    profiles["server_options"][server_id] = server_info["options_overrides"]
-            del profiles["servers"]
-            needs_save = True
-            print("Migrated 'servers' to 'server_options' in profiles")
-
-        # Ensure server_options exists
-        if "server_options" not in profiles:
-            profiles["server_options"] = {}
-
-        # Migration: Fix "check" -> "Czech" in language subscriptions
-        # Check default profile language subscriptions
-        if "client_options_defaults" in profiles:
-            defaults = profiles["client_options_defaults"]
-            if "social" in defaults:
-                # Fix language subscriptions
-                if "language_subscriptions" in defaults["social"]:
-                    lang_subs = defaults["social"]["language_subscriptions"]
-                    if "Check" in lang_subs:
-                        lang_subs["Czech"] = lang_subs.pop("Check")
-                        needs_save = True
-                        print(
-                            "Migrated language subscription: 'Check' -> 'Czech' in default profile"
-                        )
-
-                # Fix chat_input_language
-                if "chat_input_language" in defaults["social"]:
-                    chat_lang = defaults["social"]["chat_input_language"]
-                    if chat_lang == "Check":
-                        defaults["social"]["chat_input_language"] = "Czech"
-                        needs_save = True
-                        print(
-                            "Migrated chat_input_language: 'Check' -> 'Czech' in default profile"
-                        )
-
-        # Check each server override for language subscriptions
-        for server_id, overrides in profiles.get("server_options", {}).items():
-            if "social" in overrides:
-                # Fix language subscriptions
-                if "language_subscriptions" in overrides["social"]:
-                    lang_subs = overrides["social"]["language_subscriptions"]
-                    if "Check" in lang_subs:
-                        lang_subs["Czech"] = lang_subs.pop("Check")
-                        needs_save = True
-                        print(
-                            f"Migrated language subscription: 'Check' -> 'Czech' in server {server_id}"
-                        )
-
-                # Fix chat_input_language
-                if "chat_input_language" in overrides["social"]:
-                    chat_lang = overrides["social"]["chat_input_language"]
-                    if chat_lang == "Check":
-                        overrides["social"]["chat_input_language"] = "Czech"
-                        needs_save = True
-                        print(
-                            f"Migrated chat_input_language: 'Check' -> 'Czech' in server {server_id}"
-                        )
-
-        # Migration: Rename table_creations to local_table/creation_notifications
-        # and add new default options to local_table
-        if "client_options_defaults" in profiles:
-            defaults = profiles["client_options_defaults"]
-            if "table_creations" in defaults:
-                table_creations_value = defaults.pop("table_creations")
-                if "local_table" not in defaults:
-                    defaults["local_table"] = {}
-                # Build local_table with proper ordering (new options before creation_notifications)
-                new_local_table = {
-                    "start_as_visible": defaults["local_table"].get("start_as_visible", "always"),
-                    "start_with_password": defaults["local_table"].get("start_with_password", "never"),
-                    "default_password_text": defaults["local_table"].get("default_password_text", ""),
-                    "creation_notifications": table_creations_value,
-                }
-                # Preserve any other existing keys in local_table
-                for key, value in defaults["local_table"].items():
-                    if key not in new_local_table:
-                        new_local_table[key] = value
-                defaults["local_table"] = new_local_table
+        for migration in migrations:
+            if migration(profiles):
                 needs_save = True
-                print("Migrated 'table_creations' -> 'local_table/creation_notifications' in default profile")
-
-        # Check each server override for table_creations
-        for server_id, overrides in profiles.get("server_options", {}).items():
-            if "table_creations" in overrides:
-                table_creations_value = overrides.pop("table_creations")
-                if "local_table" not in overrides:
-                    overrides["local_table"] = {}
-                # Build local_table with proper ordering
-                new_local_table = {
-                    "start_as_visible": overrides["local_table"].get("start_as_visible", "always"),
-                    "start_with_password": overrides["local_table"].get("start_with_password", "never"),
-                    "default_password_text": overrides["local_table"].get("default_password_text", ""),
-                    "creation_notifications": table_creations_value,
-                }
-                # Preserve any other existing keys in local_table
-                for key, value in overrides["local_table"].items():
-                    if key not in new_local_table:
-                        new_local_table[key] = value
-                overrides["local_table"] = new_local_table
-                needs_save = True
-                print(f"Migrated 'table_creations' -> 'local_table/creation_notifications' in server {server_id}")
-
-        # Save immediately if migration occurred
         if needs_save:
             self.profiles = profiles
             self.save_profiles()
             print("Profile migration completed and saved to disk.")
-
         return profiles
+
+    def _migrate_servers_structure(self, profiles: Dict[str, Any]) -> bool:
+        changed = False
+        if "servers" in profiles and "server_options" not in profiles:
+            profiles["server_options"] = {}
+            for server_id, server_info in profiles["servers"].items():
+                overrides = server_info.get("options_overrides")
+                if overrides:
+                    profiles["server_options"][server_id] = overrides
+            del profiles["servers"]
+            changed = True
+            print("Migrated 'servers' to 'server_options' in profiles")
+        profiles.setdefault("server_options", {})
+        return changed
+
+    def _migrate_language_settings(self, profiles: Dict[str, Any]) -> bool:
+        changed = False
+        defaults = profiles.get("client_options_defaults", {})
+        if self._fix_language_section(defaults.get("social", {}), "default profile"):
+            changed = True
+        for server_id, overrides in profiles.get("server_options", {}).items():
+            social = overrides.get("social", {})
+            if self._fix_language_section(social, f"server {server_id}"):
+                changed = True
+        return changed
+
+    def _fix_language_section(self, social: Dict[str, Any], label: str) -> bool:
+        changed = False
+        lang_subs = social.get("language_subscriptions")
+        if isinstance(lang_subs, dict) and "Check" in lang_subs:
+            lang_subs["Czech"] = lang_subs.pop("Check")
+            changed = True
+            print(f"Migrated language subscription: 'Check' -> 'Czech' in {label}")
+        chat_lang = social.get("chat_input_language")
+        if chat_lang == "Check":
+            social["chat_input_language"] = "Czech"
+            changed = True
+            print(f"Migrated chat_input_language: 'Check' -> 'Czech' in {label}")
+        return changed
+
+    def _migrate_table_creations(self, profiles: Dict[str, Any]) -> bool:
+        changed = False
+        defaults = profiles.get("client_options_defaults", {})
+        if self._move_table_creations(defaults, "default profile"):
+            changed = True
+        for server_id, overrides in profiles.get("server_options", {}).items():
+            if self._move_table_creations(overrides, f"server {server_id}"):
+                changed = True
+        return changed
+
+    def _move_table_creations(self, options: Dict[str, Any], label: str) -> bool:
+        if "table_creations" not in options:
+            return False
+        table_creations_value = options.pop("table_creations")
+        local_table = options.setdefault("local_table", {})
+        new_local_table = {
+            "start_as_visible": local_table.get("start_as_visible", "always"),
+            "start_with_password": local_table.get("start_with_password", TABLE_SECURITY_MODE_NEVER),
+            "default_password_text": local_table.get("default_password_text", TABLE_SECURITY_DEFAULT_TEXT),
+            "creation_notifications": table_creations_value,
+        }
+        for key, value in local_table.items():
+            if key not in new_local_table:
+                new_local_table[key] = value
+        options["local_table"] = new_local_table
+        print(f"Migrated 'table_creations' -> 'local_table/creation_notifications' in {label}")
+        return True
 
     def _deep_merge(
         self, base: Dict[str, Any], override: Dict[str, Any], override_wins: bool = True
@@ -840,10 +817,11 @@ class ConfigManager:
                 self.profiles["server_options"] = {}
             target = self.profiles["server_options"].setdefault(server_id, {})
 
-        success = set_item_in_dict(target, key_path, value, create_mode= create_mode)
-        if success: self.save_profiles()
+        success = set_item_in_dict(target, key_path, value, create_mode=create_mode)
+        if success:
+            self.save_profiles()
 
-    def clear_server_override(self, server_id: str, key_path: str, *, delete_empty_layers: bool= True):
+    def clear_server_override(self, server_id: str, key_path: str, *, delete_empty_layers: bool = True):
         """Clear a server-specific override (revert to default).
 
         Args:
@@ -856,8 +834,9 @@ class ConfigManager:
 
         overrides = self.profiles["server_options"][server_id]
 
-        success = delete_item_from_dict(overrides, key_path, delete_empty_layers= delete_empty_layers)
-        if success: self.save_profiles()
+        success = delete_item_from_dict(overrides, key_path, delete_empty_layers=delete_empty_layers)
+        if success:
+            self.save_profiles()
 
     def _deep_copy(self, obj: Any) -> Any:
         """Deep copy a nested dict/list structure."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import ssl
 import tempfile
@@ -18,6 +19,8 @@ from jsonschema import ValidationError as SchemaValidationError
 from websockets.asyncio.client import connect
 
 from .packet_validator import validate_incoming, validate_outgoing
+
+logger = logging.getLogger(__name__)
 
 
 class TLSUserDeclinedError(Exception):
@@ -132,9 +135,7 @@ class NetworkManager:
             self.thread.start()
             return True
         except Exception:
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("Failed to start networking thread")
             return False
 
     def _run_async_loop(self, server_url, username, password):
@@ -145,9 +146,7 @@ class NetworkManager:
                 self._connect_and_listen(server_url, username, password)
             )
         except Exception:
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("Network loop crashed")
         finally:
             if self.loop:
                 self.loop.close()
@@ -185,9 +184,7 @@ class NetworkManager:
             self._emit_activity("TLS certificate was not trusted; connection aborted.")
             self._debug("net: tls certificate not trusted")
         except Exception:
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("Unexpected exception while connecting to server")
         finally:
             self._debug(f"net: closing connection should_stop={self.should_stop!r}")
             self.connected = False
@@ -195,8 +192,8 @@ class NetworkManager:
             if websocket:
                 try:
                     await websocket.close()
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001 - log and continue shutting down
+                    logger.debug("Failed to close websocket cleanly: %s", exc)
             if not self.should_stop:
                 on_connection_lost = getattr(self.event_handler, "on_connection_lost", None)
                 if callable(on_connection_lost):
@@ -338,14 +335,15 @@ class NetworkManager:
                 return None
             host = self._get_server_host(server_url)
             return self._build_certificate_info(cert_dict or {}, fingerprint_hex, pem, host)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - remote handshake can fail for many reasons
+            logger.debug("Failed to fetch certificate info from %s: %s", server_url, exc)
             return None
         finally:
             if websocket:
                 try:
                     await websocket.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Failed to close certificate fetch websocket: %s", exc)
 
     def _store_trusted_certificate(self, cert_info: CertificateInfo) -> None:
         manager = getattr(self.event_handler, "config_manager", None)
@@ -396,14 +394,15 @@ class NetworkManager:
             tmp_path = tmp.name
             tmp.close()
             return ssl._ssl._test_decode_cert(tmp_path)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - OpenSSL raises varied errors
+            logger.debug("Failed to decode certificate: %s", exc)
             return None
         finally:
             if tmp_path:
                 try:
                     os.unlink(tmp_path)
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.debug("Failed to remove temporary certificate file %s: %s", tmp_path, exc)
 
     def _build_certificate_info(
         self, cert_dict, fingerprint_hex: str, pem: str, host: str
@@ -451,7 +450,8 @@ class NetworkManager:
     def _get_server_host(self, server_url: str) -> str:
         try:
             return urlparse(server_url).hostname or ""
-        except Exception:
+        except ValueError as exc:
+            logger.debug("Unable to parse server URL %s: %s", server_url, exc)
             return ""
 
     def disconnect(self, wait=False, timeout=3.0):
@@ -461,8 +461,8 @@ class NetworkManager:
         if self.ws and self.loop:
             try:
                 asyncio.run_coroutine_threadsafe(self.ws.close(), self.loop)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to schedule websocket close: %s", exc)
 
         if wait and self.thread and self.thread.is_alive():
             self.thread.join(timeout=timeout)
@@ -484,9 +484,7 @@ class NetworkManager:
             asyncio.run_coroutine_threadsafe(self.ws.send(message), self.loop)
             return True
         except Exception:
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("Failed to send packet")
             self.connected = False
             on_connection_lost = getattr(self.event_handler, "on_connection_lost", None)
             if callable(on_connection_lost):

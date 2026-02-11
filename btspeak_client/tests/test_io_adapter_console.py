@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import builtins
-from pathlib import Path
 
 from btspeak_client.io_adapter import ConsoleIO, ChoiceOption, BTSpeakIO
 

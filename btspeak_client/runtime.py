@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from threading import Event
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from .config_manager import ConfigManager
 from .io_adapter import BTSpeakIO, ChoiceOption, ConsoleIO, IOAdapter
 from .network_manager import CertificateInfo, NetworkManager
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class Credentials:
@@ -23,6 +26,18 @@ class Credentials:
     server_url: str
     username: str
     password: str
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _SessionMenuState:
+    waiting_announced: bool = False
+    last_session_choice: str | None = None
+    menu_failures: int = 0
+    last_menu_notice: float = 0.0
+    last_menu_version_shown: int = -1
 
 
 class BTSpeakClientRuntime:
@@ -86,8 +101,8 @@ class BTSpeakClientRuntime:
             timestamp = datetime.now().isoformat()
             with self._debug_log_path.open("a", encoding="utf-8") as fh:
                 fh.write(f"[{timestamp}] {message}\n")
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("Unable to write runtime debug log: %s", exc)
 
     def _safe_notify(self, message: str) -> None:
         try:
@@ -514,8 +529,8 @@ class BTSpeakClientRuntime:
             try:
                 if self.io.view_paged_text(title, lines, page_size=page_size):
                     return
-            except BaseException:
-                pass
+            except BaseException as exc:
+                self._debug_log(f"view_paged_text failed: {exc!r}")
         total_lines = len(lines)
         total_pages = (total_lines + page_size - 1) // page_size
         page_index = 0
@@ -1162,111 +1177,131 @@ class BTSpeakClientRuntime:
 
     def _session_loop(self):
         self._safe_message("Connected.", wait=False)
-        waiting_announced = False
-        last_session_choice: str | None = None
-        menu_failures = 0
-        last_menu_notice = 0.0
-        last_menu_version_shown = -1
+        menu_state = _SessionMenuState()
         while self.running and self.connected:
-            if isinstance(self.io, BTSpeakIO):
-                if time.time() - self._last_audio_activity < 2.0:
-                    time.sleep(0.05)
-                    continue
-                if not self.current_menu_items:
-                    self._debug_log("session: waiting for server menu (no items)")
-                    if not waiting_announced:
-                        self._safe_message("Connected. Waiting for server menu options.", wait=False)
-                        waiting_announced = True
-                    time.sleep(0.05)
-                    continue
-
-                waiting_announced = False
-                if not self._menu_refresh_requested and self._menu_version == last_menu_version_shown:
-                    time.sleep(0.05)
-                    continue
-                self._debug_log(
-                    f"session: opening menu id={self.current_menu_id!r} items={len(self.current_menu_items)}"
-                )
-                menu_version = self._menu_version
-                self._menu_refresh_requested = False
-                combined_options = self._build_ordered_session_options()
-                default_choice = None
-                if self.current_menu_id:
-                    default_choice = self._last_menu_choice_by_id.get(self.current_menu_id)
-                if default_choice is None:
-                    for option in combined_options:
-                        if option.key.startswith("menu:"):
-                            default_choice = option.key
-                            break
-                action = self._safe_choose(
-                    "Session options",
-                    combined_options,
-                    default_key=default_choice or last_session_choice,
-                    show_cancel=False,
-                )
-                if action is None:
-                    menu_failures += 1
-                    self._debug_log(f"session: session menu canceled or failed count={menu_failures}")
-                    self._menu_refresh_requested = True
-                    now = time.time()
-                    if now - last_menu_notice > 2.0:
-                        self.io.notify("Session menu unavailable. Staying connected.")
-                        last_menu_notice = now
-                    time.sleep(0.2)
-                    continue
-                menu_failures = 0
-                if action.startswith("menu:"):
-                    last_session_choice = action
-                    if self.current_menu_id:
-                        self._last_menu_choice_by_id[self.current_menu_id] = action
-                    last_menu_version_shown = menu_version
-                    selection = int(action.split(":", 1)[1])
-                    self._send_menu_selection(selection)
-                    continue
-                if action == "disconnect":
-                    self._debug_log("session: session menu requested disconnect")
-                    self._disconnect_and_stop_audio()
-                    break
-                if action == "review_buffer":
-                    last_session_choice = action
-                    self._review_buffer()
-                    self._menu_refresh_requested = True
-                    continue
-                if action == "client_options":
-                    last_session_choice = action
-                    self._open_client_options_menu()
-                    self._menu_refresh_requested = True
-                    continue
-                if action == "client_commands":
-                    last_session_choice = action
-                    command = self._choose_session_command()
-                    if command:
-                        self._handle_user_input(command)
-                    self._menu_refresh_requested = True
-                    continue
-                if action == "key_help":
-                    last_session_choice = action
-                    self._show_key_help()
-                    self._menu_refresh_requested = True
-                    last_menu_version_shown = menu_version
-                    time.sleep(0.2)
-                    continue
-                if action == "table_help":
-                    last_session_choice = action
-                    self._show_key_help()
-                    self._menu_refresh_requested = True
-                    last_menu_version_shown = menu_version
-                    time.sleep(0.2)
-                    continue
-
-            self.io.notify("Connected. Enter /help for commands.")
-            line = self.io.request_text("Message or command", default="")
-            if line is None:
-                if isinstance(self.io, BTSpeakIO):
-                    continue
-                self._disconnect_and_stop_audio()
+            if self._handle_btspeak_menu_cycle(menu_state):
+                continue
+            if not self._prompt_text_session():
                 break
-            self._handle_user_input(line)
+
+    def _handle_btspeak_menu_cycle(self, state: _SessionMenuState) -> bool:
+        if not isinstance(self.io, BTSpeakIO):
+            return False
+        if time.time() - self._last_audio_activity < 2.0:
+            time.sleep(0.05)
+            return True
+        if not self.current_menu_items:
+            state.waiting_announced = self._announce_waiting_for_menu(state.waiting_announced)
+            time.sleep(0.05)
+            return True
+        state.waiting_announced = False
+        if not self._menu_refresh_requested and self._menu_version == state.last_menu_version_shown:
+            time.sleep(0.05)
+            return True
+        action, menu_version = self._prompt_session_action(state)
+        return self._handle_session_action(action, menu_version, state)
+
+    def _announce_waiting_for_menu(self, already_announced: bool) -> bool:
+        self._debug_log("session: waiting for server menu (no items)")
+        if not already_announced:
+            self._safe_message("Connected. Waiting for server menu options.", wait=False)
+            return True
+        return already_announced
+
+    def _prompt_session_action(
+        self, state: _SessionMenuState
+    ) -> tuple[str | None, int]:
+        self._debug_log(
+            f"session: opening menu id={self.current_menu_id!r} items={len(self.current_menu_items)}"
+        )
+        menu_version = self._menu_version
+        self._menu_refresh_requested = False
+        combined_options = self._build_ordered_session_options()
+        default_choice = self._determine_default_session_choice(state, combined_options)
+        action = self._safe_choose(
+            "Session options",
+            combined_options,
+            default_key=default_choice,
+            show_cancel=False,
+        )
+        return action, menu_version
+
+    def _determine_default_session_choice(
+        self, state: _SessionMenuState, combined_options: list[ChoiceOption]
+    ) -> str | None:
+        if self.current_menu_id:
+            stored_choice = self._last_menu_choice_by_id.get(self.current_menu_id)
+            if stored_choice:
+                return stored_choice
+        for option in combined_options:
+            if option.key.startswith("menu:"):
+                return option.key
+        return state.last_session_choice
+
+    def _handle_session_action(
+        self, action: str | None, menu_version: int, state: _SessionMenuState
+    ) -> bool:
+        if action is None:
+            self._handle_menu_failure(state)
+            return True
+        state.menu_failures = 0
+        state.last_session_choice = action
+        if action.startswith("menu:"):
+            self._record_menu_choice(action, menu_version, state)
+            selection = int(action.split(":", 1)[1])
+            self._send_menu_selection(selection)
+            return True
+        if action == "disconnect":
+            self._debug_log("session: session menu requested disconnect")
+            self._disconnect_and_stop_audio()
+            return True
+        if action == "review_buffer":
+            self._review_buffer()
+            self._menu_refresh_requested = True
+            return True
+        if action == "client_options":
+            self._open_client_options_menu()
+            self._menu_refresh_requested = True
+            return True
+        if action == "client_commands":
+            command = self._choose_session_command()
+            if command:
+                self._handle_user_input(command)
+            self._menu_refresh_requested = True
+            return True
+        if action in {"key_help", "table_help"}:
+            self._show_key_help()
+            self._menu_refresh_requested = True
+            state.last_menu_version_shown = menu_version
+            time.sleep(0.2)
+            return True
+        return False
+
+    def _handle_menu_failure(self, state: _SessionMenuState) -> None:
+        state.menu_failures += 1
+        self._debug_log(f"session: session menu canceled or failed count={state.menu_failures}")
+        self._menu_refresh_requested = True
+        now = time.time()
+        if now - state.last_menu_notice > 2.0:
+            self.io.notify("Session menu unavailable. Staying connected.")
+            state.last_menu_notice = now
+        time.sleep(0.2)
+
+    def _record_menu_choice(self, action: str, menu_version: int, state: _SessionMenuState) -> None:
+        if self.current_menu_id:
+            self._last_menu_choice_by_id[self.current_menu_id] = action
+        state.last_menu_version_shown = menu_version
+
+    def _prompt_text_session(self) -> bool:
+        self.io.notify("Connected. Enter /help for commands.")
+        line = self.io.request_text("Message or command", default="")
+        if line is None:
+            if isinstance(self.io, BTSpeakIO):
+                return True
+            self._disconnect_and_stop_audio()
+            return False
+        self._handle_user_input(line)
+        return True
 
     def _choose_session_command(self) -> str | None:
         choice = self._safe_choose(
@@ -1315,114 +1350,130 @@ class BTSpeakClientRuntime:
         line = raw_line.strip()
         if not line:
             return
-
-        if self.pending_input_id:
-            payload = {"type": "editbox", "text": line, "input_id": self.pending_input_id}
-            self.pending_input_id = None
-            self.network.send_packet(payload)
+        if self._submit_pending_input(line):
             return
-
         if not line.startswith("/"):
-            self.network.send_packet(
-                {
-                    "type": "chat",
-                    "convo": "local",
-                    "message": line,
-                    "language": self.client_options.get("social", {}).get(
-                        "chat_input_language", "Other"
-                    ),
-                }
-            )
+            self._send_chat_message("local", line)
             return
-
         command, _, rest = line.partition(" ")
-        command = command.lower()
-        rest = rest.strip()
+        self._handle_slash_command(command.lower(), rest.strip())
 
-        if command == "/quit":
-            self.running = False
-            return
-        if command == "/help":
-            self.io.notify(
-                "Commands: /quit /ping /online /online_games /select N /escape /keybind KEY [ctrl alt shift] /keyhelp /local MSG /global MSG"
-            )
-            return
-        if command == "/ping":
-            self._ping_start_time = time.time()
-            self.network.send_packet({"type": "ping"})
-            return
-        if command == "/online":
-            self.network.send_packet({"type": "list_online"})
-            return
-        if command == "/online_games":
-            self.network.send_packet({"type": "list_online_with_games"})
-            return
-        if command == "/escape":
-            self.network.send_packet({"type": "escape", "menu_id": self.current_menu_id})
+    def _submit_pending_input(self, text: str) -> bool:
+        if not self.pending_input_id:
+            return False
+        payload = {"type": "editbox", "text": text, "input_id": self.pending_input_id}
+        self.pending_input_id = None
+        self.network.send_packet(payload)
+        return True
+
+    def _send_chat_message(self, convo: str, message: str) -> None:
+        self.network.send_packet(
+            {
+                "type": "chat",
+                "convo": convo,
+                "message": message,
+                "language": self.client_options.get("social", {}).get(
+                    "chat_input_language", "Other"
+                ),
+            }
+        )
+
+    def _handle_slash_command(self, command: str, rest: str) -> None:
+        handlers = {
+            "/quit": self._handle_command_quit,
+            "/help": self._handle_command_help,
+            "/ping": self._handle_command_ping,
+            "/online": self._handle_command_online,
+            "/online_games": self._handle_command_online_games,
+            "/escape": self._handle_command_escape,
+        }
+        handler = handlers.get(command)
+        if handler:
+            handler(rest)
             return
         if command in ("/local", "/global"):
-            if not rest:
-                self.io.rejected_action()
-                return
-            self.network.send_packet(
-                {
-                    "type": "chat",
-                    "convo": "global" if command == "/global" else "local",
-                    "message": rest,
-                    "language": self.client_options.get("social", {}).get(
-                        "chat_input_language", "Other"
-                    ),
-                }
-            )
+            self._handle_chat_command(command, rest)
             return
         if command == "/select":
-            if not rest.isdigit():
-                self.io.rejected_action()
-                return
-            selection = int(rest)
-            item_id = None
-            if 1 <= selection <= len(self.current_menu_items):
-                item_id = self.current_menu_items[selection - 1].get("id")
-            payload = {
-                "type": "menu",
-                "menu_id": self.current_menu_id,
-                "selection": selection,
-            }
-            if item_id:
-                payload["selection_id"] = item_id
-            self.network.send_packet(payload)
+            self._handle_select_command(rest)
             return
         if command in ("/keybind", "/key"):
-            if not rest:
-                self._show_key_help()
-                return
-            parts = [part.lower() for part in rest.split() if part]
-            key = parts[0]
-            modifiers = set(parts[1:])
-            menu_index, menu_item_id = self._build_menu_context()
-            payload = {
-                "type": "keybind",
-                "key": key,
-                "control": "ctrl" in modifiers or "control" in modifiers,
-                "alt": "alt" in modifiers,
-                "shift": "shift" in modifiers,
-                "menu_id": self.current_menu_id,
-                "menu_index": menu_index,
-                "menu_item_id": menu_item_id,
-            }
-            self.network.send_packet(payload)
+            self._handle_keybind_command(rest)
             return
-
         if command.startswith("/"):
-            self.network.send_packet(
-                {
-                    "type": "slash_command",
-                    "command": command[1:],
-                    "args": rest,
-                }
-            )
+            self._send_unknown_slash_command(command, rest)
             return
         self.io.rejected_action()
+
+    def _handle_command_quit(self, _args: str) -> None:
+        self.running = False
+
+    def _handle_command_help(self, _args: str) -> None:
+        self.io.notify(
+            "Commands: /quit /ping /online /online_games /select N /escape /keybind KEY [ctrl alt shift] /keyhelp /local MSG /global MSG"
+        )
+
+    def _handle_command_ping(self, _args: str) -> None:
+        self._ping_start_time = time.time()
+        self.network.send_packet({"type": "ping"})
+
+    def _handle_command_online(self, _args: str) -> None:
+        self.network.send_packet({"type": "list_online"})
+
+    def _handle_command_online_games(self, _args: str) -> None:
+        self.network.send_packet({"type": "list_online_with_games"})
+
+    def _handle_command_escape(self, _args: str) -> None:
+        self.network.send_packet({"type": "escape", "menu_id": self.current_menu_id})
+
+    def _handle_chat_command(self, command: str, message: str) -> None:
+        if not message:
+            self.io.rejected_action()
+            return
+        convo = "global" if command == "/global" else "local"
+        self._send_chat_message(convo, message)
+
+    def _handle_select_command(self, argument: str) -> None:
+        if not argument.isdigit():
+            self.io.rejected_action()
+            return
+        selection = int(argument)
+        item_id = None
+        if 1 <= selection <= len(self.current_menu_items):
+            item_id = self.current_menu_items[selection - 1].get("id")
+        payload = {
+            "type": "menu",
+            "menu_id": self.current_menu_id,
+            "selection": selection,
+        }
+        if item_id:
+            payload["selection_id"] = item_id
+        self.network.send_packet(payload)
+
+    def _handle_keybind_command(self, argument: str) -> None:
+        if not argument:
+            self._show_key_help()
+            return
+        parts = [part.lower() for part in argument.split() if part]
+        key = parts[0]
+        modifiers = set(parts[1:])
+        menu_index, menu_item_id = self._build_menu_context()
+        payload = {
+            "type": "keybind",
+            "key": key,
+            "control": "ctrl" in modifiers or "control" in modifiers,
+            "alt": "alt" in modifiers,
+            "shift": "shift" in modifiers,
+            "menu_id": self.current_menu_id,
+            "menu_index": menu_index,
+            "menu_item_id": menu_item_id,
+        }
+        self.network.send_packet(payload)
+
+    def _send_unknown_slash_command(self, command: str, rest: str) -> None:
+        self.network.send_packet(
+            {"type": "slash_command", "command": command[1:], "args": rest}
+        )
 
     def add_history(self, text: str, buffer_name: str = "misc") -> None:
         self.buffer_system.add_item(buffer_name, text)
@@ -1540,8 +1591,8 @@ class BTSpeakClientRuntime:
                 if len(packet.get("items", [])) > 10:
                     rendered += ", ..."
                 self._debug_log(f"event: server_menu items=[{rendered}]")
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - defensive logging for malformed menu payloads
+            self._debug_log(f"event: server_menu labels failed: {exc!r}")
         self.current_menu_id = packet.get("menu_id")
         self.current_menu_items = []
         self.current_menu_selection_id = packet.get("selection_id")
@@ -1727,6 +1778,3 @@ class BTSpeakClientRuntime:
         if message:
             parts.append(message)
         self.io.notify(". ".join(parts))
-        if command in ("/keyhelp", "/keys"):
-            self._show_key_help()
-            return
