@@ -483,6 +483,76 @@ def test_session_loop_btspeak_select_command_uses_options_list(monkeypatch):
     assert "disconnect" in session_options[0]
 
 
+def test_session_menu_hides_disconnect_when_logout_present(monkeypatch):
+    io = FakeIO(choices=["menu:1"])
+    runtime, _, _ = make_runtime(io)
+    runtime.connected = True
+    runtime.running = True
+    runtime.current_menu_id = "main"
+    runtime.current_menu_items = [
+        {"text": "Play", "id": "play"},
+        {"text": "Logout", "id": "logout"},
+    ]
+
+    import btspeak_client.runtime as runtime_mod
+
+    monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
+
+    def fake_sleep(_seconds):
+        runtime.running = False
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+
+    runtime._session_loop()
+
+    session_options = [options for prompt, options in io.option_history if prompt == "Session options"]
+    assert session_options
+    assert "disconnect" not in session_options[0]
+
+
+def test_table_menu_adds_key_help(monkeypatch):
+    io = FakeIO(choices=["table_help"])
+    runtime, _, _ = make_runtime(io)
+    runtime.connected = True
+    runtime.running = True
+    runtime.current_menu_id = "turn_menu"
+    runtime.current_menu_items = [{"text": "Start game", "id": "start_game"}]
+
+    import btspeak_client.runtime as runtime_mod
+
+    monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
+
+    viewed = []
+
+    def fake_view(title, text):
+        viewed.append((title, text))
+        runtime.running = False
+
+    io.view_long_text = fake_view
+
+    runtime._session_loop()
+
+    session_options = [options for prompt, options in io.option_history if prompt == "Session options"]
+    assert session_options
+    assert "table_help" in session_options[0]
+    assert viewed
+
+
+def test_keybind_without_args_shows_help():
+    io = FakeIO()
+    runtime, _, _ = make_runtime(io)
+    shown = []
+
+    def fake_view(title, text):
+        shown.append((title, text))
+
+    io.view_long_text = fake_view
+
+    runtime._handle_user_input("/keybind")
+
+    assert shown
+
+
 def test_session_loop_btspeak_review_buffers_uses_long_view(monkeypatch):
     io = FakeIO(choices=["review_buffer", "chats", "back", "back", "disconnect"])
     runtime, holder, _ = make_runtime(io)

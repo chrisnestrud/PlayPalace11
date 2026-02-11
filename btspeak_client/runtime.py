@@ -182,6 +182,44 @@ class BTSpeakClientRuntime:
         options.append(ChoiceOption("back", "Back"))
         return options
 
+    def _menu_has_logout(self) -> bool:
+        for item in self.current_menu_items:
+            item_id = str(item.get("id") or "").strip().lower()
+            text = str(item.get("text") or "").strip().lower()
+            if item_id in {"logout", "log_out", "log-out"}:
+                return True
+            if "logout" in text or "log out" in text:
+                return True
+        return False
+
+    def _is_table_menu(self) -> bool:
+        menu_id = (self.current_menu_id or "").lower()
+        return "turn_menu" in menu_id or "table_menu" in menu_id
+
+    def _build_key_emulation_help(self) -> str:
+        help_lines: list[str] = []
+        help_path = Path("/BTSpeak/Help/keyboard-emulation")
+        if help_path.exists():
+            try:
+                for line in help_path.read_text(encoding="utf-8").splitlines():
+                    if "Function Key:" in line:
+                        help_lines.append(line.strip())
+                        break
+            except Exception as exc:
+                self._debug_log(f"key emulation help read failed: {exc!r}")
+
+        help_lines.append(
+            "F-keys: Function Key chord (dots 2-3-5) then letter A for F1 through L for F12."
+        )
+        help_lines.append("Example: F3 is Function Key chord then letter C.")
+        help_lines.append("Escape key: dots 2-6 (low E).")
+        help_lines.append("Examples: /keybind b (bot), /keybind f3 (toggle spectator).")
+        return "\n".join(help_lines)
+
+    def _show_key_help(self) -> None:
+        body = self._build_key_emulation_help()
+        self.io.view_long_text("Key emulation help", body)
+
     @staticmethod
     def _format_choice_options_with_hotkeys(options: list[ChoiceOption]) -> list[ChoiceOption]:
         key_counts: dict[str, int] = {}
@@ -1110,8 +1148,11 @@ class BTSpeakClientRuntime:
                     ChoiceOption("client_options", "Client options, o"),
                     ChoiceOption("review_buffer", "Review buffers, b"),
                     ChoiceOption("client_commands", "Client commands, c"),
-                    ChoiceOption("disconnect", "Log out, z"),
                 ]
+                if self._is_table_menu():
+                    combined_options.append(ChoiceOption("table_help", "Table key help (H-chord), h"))
+                if not self._menu_has_logout():
+                    combined_options.append(ChoiceOption("disconnect", "Log out, z"))
                 action = self._safe_choose(
                     "Session options",
                     combined_options,
@@ -1156,6 +1197,11 @@ class BTSpeakClientRuntime:
                         self._handle_user_input(command)
                     self._menu_refresh_requested = True
                     continue
+                if action == "table_help":
+                    last_session_choice = action
+                    self._show_key_help()
+                    self._menu_refresh_requested = True
+                    continue
 
             self.io.notify("Connected. Enter /help for commands.")
             line = self.io.request_text("Message or command", default="")
@@ -1177,12 +1223,16 @@ class BTSpeakClientRuntime:
                 ChoiceOption("local", "Local chat message"),
                 ChoiceOption("global", "Global chat message"),
                 ChoiceOption("help", "Help"),
+                ChoiceOption("key_help", "Key emulation help"),
                 ChoiceOption("quit", "Quit client"),
                 ChoiceOption("back", "Back"),
             ],
             default_key="back",
         )
         if choice in (None, "back"):
+            return None
+        if choice == "key_help":
+            self._show_key_help()
             return None
         if choice in ("local", "global"):
             text = self.io.request_text("Message text", default="")
@@ -1238,7 +1288,7 @@ class BTSpeakClientRuntime:
             return
         if command == "/help":
             self.io.notify(
-                "Commands: /quit /ping /online /online_games /select N /escape /keybind KEY [ctrl alt shift] /local MSG /global MSG"
+                "Commands: /quit /ping /online /online_games /select N /escape /keybind KEY [ctrl alt shift] /keyhelp /local MSG /global MSG"
             )
             return
         if command == "/ping":
@@ -1288,7 +1338,7 @@ class BTSpeakClientRuntime:
             return
         if command in ("/keybind", "/key"):
             if not rest:
-                self.io.rejected_action()
+                self._show_key_help()
                 return
             parts = [part.lower() for part in rest.split() if part]
             key = parts[0]
@@ -1422,6 +1472,20 @@ class BTSpeakClientRuntime:
             f"selection_id={packet.get('selection_id')!r} "
             f"position={packet.get('position')!r}"
         )
+        try:
+            labels = []
+            for item in packet.get("items", [])[:10]:
+                if isinstance(item, str):
+                    labels.append(item)
+                elif isinstance(item, dict):
+                    labels.append(str(item.get("text", "")))
+            if labels:
+                rendered = ", ".join(labels)
+                if len(packet.get("items", [])) > 10:
+                    rendered += ", ..."
+                self._debug_log(f"event: server_menu items=[{rendered}]")
+        except Exception:
+            pass
         self.current_menu_id = packet.get("menu_id")
         self.current_menu_items = []
         self.current_menu_selection_id = packet.get("selection_id")
@@ -1607,3 +1671,6 @@ class BTSpeakClientRuntime:
         if message:
             parts.append(message)
         self.io.notify(". ".join(parts))
+        if command in ("/keyhelp", "/keys"):
+            self._show_key_help()
+            return
