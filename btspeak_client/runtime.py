@@ -848,6 +848,7 @@ class BTSpeakClientRuntime:
             return
         options = self.config_manager.get_client_options(self.server_id)
         self.client_options = options
+        self._apply_audio_options(options)
         self.network.send_packet({"type": "client_options", "options": options})
 
     @staticmethod
@@ -875,7 +876,21 @@ class BTSpeakClientRuntime:
             create_mode=True,
         )
         self.client_options = self.config_manager.get_client_options(self.server_id)
+        self._apply_audio_options(self.client_options)
         self._send_client_options_to_server()
+
+    def _apply_audio_options(self, options: dict) -> None:
+        audio = options.get("audio") if isinstance(options, dict) else None
+        if not isinstance(audio, dict):
+            return
+        try:
+            self.audio_manager.set_music_volume(int(audio.get("music_volume", 100)))
+        except Exception as exc:
+            self._debug_log(f"audio option apply music failed: {exc!r}")
+        try:
+            self.audio_manager.set_ambience_volume(int(audio.get("ambience_volume", 100)))
+        except Exception as exc:
+            self._debug_log(f"audio option apply ambience failed: {exc!r}")
 
     def _edit_scalar_option(self, label: str, current_value):
         if isinstance(current_value, bool):

@@ -952,12 +952,26 @@ def test_set_client_option_updates_config_and_sends_packet():
     runtime.server_id = "server-1"
     runtime.connected = True
 
+    class AudioStub:
+        def __init__(self):
+            self.music = []
+            self.ambience = []
+
+        def set_music_volume(self, value):
+            self.music.append(value)
+
+        def set_ambience_volume(self, value):
+            self.ambience.append(value)
+
+    runtime.audio_manager = AudioStub()
+
     runtime._set_client_option_value(("audio", "music_volume"), 80)
 
     assert config.set_option_calls[-1] == ("audio/music_volume", 80, "server-1", True)
     last_packet = holder["manager"].sent_packets[-1]
     assert last_packet["type"] == "client_options"
     assert last_packet["options"]["audio"]["music_volume"] == 80
+    assert runtime.audio_manager.music[-1] == 80
 
 
 def test_session_menu_waits_for_new_menu_when_unchanged(monkeypatch):
