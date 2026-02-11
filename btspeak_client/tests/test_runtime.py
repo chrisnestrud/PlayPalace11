@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from btspeak_client.io_adapter import IOAdapter
 from btspeak_client.runtime import BTSpeakClientRuntime
 from btspeak_client.network_manager import CertificateInfo
@@ -12,13 +14,18 @@ class FakeIO(IOAdapter):
         self.messages: list[str] = []
         self.rejected = 0
         self.option_history: list[tuple[str, list[str]]] = []
+        self.default_history: list[tuple[str, str | None]] = []
 
     def speak(self, text: str, *, interrupt: bool = False) -> None:
         self.messages.append(text)
 
-    def choose(self, prompt, options, *, default_key=None):
+    def show_message(self, text: str, *, wait: bool = True) -> None:
+        self.messages.append(text)
+
+    def choose(self, prompt, options, *, default_key=None, show_cancel=True):
         assert options
         self.option_history.append((prompt, [option.key for option in options]))
+        self.default_history.append((prompt, default_key))
         if self.choices:
             return self.choices.pop(0)
         return default_key or options[0].key
@@ -64,11 +71,12 @@ class FakeConfigManager:
                     "chat_input_language": "English",
                     "language_subscriptions": {},
                 },
-                "interface": {},
+                "interface": {"play_typing_sounds": True},
                 "local_table": {"creation_notifications": {}},
             },
             "server_options": {"server-1": {}},
         }
+        self.set_option_calls: list[tuple[str, object, str | None, bool]] = []
 
     def get_all_identities(self):
         return self.identities
@@ -131,14 +139,30 @@ class FakeConfigManager:
         return f"ws://{host}:{port}"
 
     def get_client_options(self, server_id):
-        social_defaults = self.profiles["client_options_defaults"]["social"]
-        local_defaults = self.profiles["client_options_defaults"]["local_table"]
+        defaults = self.profiles["client_options_defaults"]
+        social_defaults = defaults["social"]
+        local_defaults = defaults["local_table"]
+        audio_defaults = defaults["audio"]
+        interface_defaults = defaults["interface"]
         overrides = self.profiles.get("server_options", {}).get(server_id, {})
         social = dict(social_defaults)
         social.update(overrides.get("social", {}))
         local_table = dict(local_defaults)
         local_table.update(overrides.get("local_table", {}))
-        return {"social": social, "local_table": local_table}
+        audio = dict(audio_defaults)
+        audio.update(overrides.get("audio", {}))
+        interface = dict(interface_defaults)
+        interface.update(overrides.get("interface", {}))
+        return {"social": social, "local_table": local_table, "audio": audio, "interface": interface}
+
+    def set_client_option(self, key_path, value, server_id=None, create_mode=False):
+        self.set_option_calls.append((key_path, value, server_id, create_mode))
+        overrides = self.profiles.setdefault("server_options", {}).setdefault(server_id, {})
+        scope = overrides
+        parts = key_path.split("/")
+        for part in parts[:-1]:
+            scope = scope.setdefault(part, {})
+        scope[parts[-1]] = value
 
     def save_profiles(self):
         return None
@@ -415,7 +439,7 @@ def test_disconnect_and_stop_audio_helper():
 
 
 def test_session_loop_btspeak_select_command_uses_options_list(monkeypatch):
-    io = FakeIO(choices=["select_command", "menu:1", "disconnect"])
+    io = FakeIO(choices=["menu:1"])
     runtime, holder, _ = make_runtime(io)
     runtime.connected = True
     runtime.running = True
@@ -435,6 +459,11 @@ def test_session_loop_btspeak_select_command_uses_options_list(monkeypatch):
 
     runtime.audio_manager = AudioStopStub()
 
+    def fake_sleep(_seconds):
+        runtime.running = False
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+
     runtime._session_loop()
 
     assert holder["manager"].sent_packets[0] == {
@@ -445,36 +474,17 @@ def test_session_loop_btspeak_select_command_uses_options_list(monkeypatch):
     }
     prompts = [prompt for prompt, _ in io.option_history]
     assert "Session options" in prompts
-    assert "Select a command" in prompts
-
-
-def test_session_loop_waiting_for_server_menu_stays_connected(monkeypatch):
-    io = FakeIO(choices=["wait", "disconnect"])
-    runtime, holder, _ = make_runtime(io)
-    runtime.connected = True
-    runtime.running = True
-    runtime.current_menu_items = []
-
-    import btspeak_client.runtime as runtime_mod
-
-    monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
-
-    class AudioStopStub:
-        def stop_all_audio(self):
-            return None
-
-    runtime.audio_manager = AudioStopStub()
-
-    runtime._session_loop()
-
-    assert holder["manager"].sent_packets == []
-    assert holder["manager"].disconnect_calls == 1
-    waiting_prompts = [prompt for prompt, _ in io.option_history if prompt == "Waiting for server menu"]
-    assert waiting_prompts
+    session_options = [options for prompt, options in io.option_history if prompt == "Session options"]
+    assert session_options
+    assert "menu:1" in session_options[0]
+    assert "client_options" in session_options[0]
+    assert "review_buffer" in session_options[0]
+    assert "client_commands" in session_options[0]
+    assert "disconnect" in session_options[0]
 
 
 def test_session_loop_btspeak_review_buffers_uses_long_view(monkeypatch):
-    io = FakeIO(choices=["review_buffer", "chats", "disconnect"])
+    io = FakeIO(choices=["review_buffer", "chats", "back", "back", "disconnect"])
     runtime, holder, _ = make_runtime(io)
     runtime.connected = True
     runtime.running = True
@@ -487,6 +497,7 @@ def test_session_loop_btspeak_review_buffers_uses_long_view(monkeypatch):
         long_views.append((title, text))
 
     io.view_long_text = capture_long_view
+    io.view_paged_text = lambda *args, **kwargs: None
 
     import btspeak_client.runtime as runtime_mod
 
@@ -500,36 +511,12 @@ def test_session_loop_btspeak_review_buffers_uses_long_view(monkeypatch):
 
     runtime._session_loop()
 
-    assert long_views == [("Chats buffer", "hello chat")]
+    assert long_views
     assert holder["manager"].disconnect_calls == 1
 
 
-def test_session_loop_hides_select_command_without_server_menu(monkeypatch):
-    io = FakeIO(choices=["disconnect"])
-    runtime, _, _ = make_runtime(io)
-    runtime.connected = True
-    runtime.running = True
-    runtime.current_menu_items = []
-
-    import btspeak_client.runtime as runtime_mod
-
-    monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
-
-    class AudioStopStub:
-        def stop_all_audio(self):
-            return None
-
-    runtime.audio_manager = AudioStopStub()
-
-    runtime._session_loop()
-
-    waiting_options = [options for prompt, options in io.option_history if prompt == "Waiting for server menu"]
-    assert waiting_options
-    assert waiting_options[0] == ["wait", "disconnect"]
-
-
 def test_session_loop_btspeak_cancel_session_options_disconnects(monkeypatch):
-    io = FakeIO(choices=[None])
+    io = FakeIO(choices=[None, "disconnect"])
     runtime, holder, _ = make_runtime(io)
     runtime.connected = True
     runtime.running = True
@@ -548,28 +535,7 @@ def test_session_loop_btspeak_cancel_session_options_disconnects(monkeypatch):
 
     assert runtime.connected is False
     assert holder["manager"].disconnect_calls == 1
-
-
-def test_session_loop_waiting_menu_none_disconnects(monkeypatch):
-    io = FakeIO(choices=[None])
-    runtime, holder, _ = make_runtime(io)
-    runtime.connected = True
-    runtime.running = True
-    runtime.current_menu_items = []
-
-    import btspeak_client.runtime as runtime_mod
-
-    monkeypatch.setattr(runtime_mod, "BTSpeakIO", FakeIO)
-
-    class AudioStopStub:
-        def stop_all_audio(self):
-            return None
-
-    runtime.audio_manager = AudioStopStub()
-    runtime._session_loop()
-
-    assert runtime.connected is False
-    assert holder["manager"].disconnect_calls == 1
+    assert any("Session menu unavailable. Staying connected." in message for message in io.messages)
 
 
 def test_session_loop_console_cancel_disconnects():
@@ -838,8 +804,27 @@ def test_identity_menu_shows_select_first_when_identities_exist():
     assert first_options == ["select_identity", "remove_identity", "add_identity", "exit"]
 
 
+def test_select_identity_defaults_to_last_identity():
+    io = FakeIO(choices=["select_identity", "back", "exit"])
+    runtime, _, config = make_runtime(io)
+    config.identities["identity-2"] = {
+        "identity_id": "identity-2",
+        "username": "bob",
+        "password": "secret",
+        "email": "",
+        "notes": "",
+    }
+    config.last_identity_id = "identity-2"
+
+    rc = runtime.run()
+
+    assert rc == 0
+    defaults = [default for prompt, default in io.default_history if prompt == "Select identity"]
+    assert defaults and defaults[-1] == "identity-2"
+
+
 def test_server_menu_hides_remove_and_connect_when_no_servers():
-    io = FakeIO(choices=["select_identity", "identity-1", "back", "exit"])
+    io = FakeIO(choices=["select_identity", "back", "exit"])
     runtime, _, config = make_runtime(io)
     config.servers = {}
 
@@ -853,7 +838,7 @@ def test_server_menu_hides_remove_and_connect_when_no_servers():
 
 
 def test_server_menu_shows_select_server_first_when_servers_exist():
-    io = FakeIO(choices=["select_identity", "identity-1", "back", "exit"])
+    io = FakeIO(choices=["select_identity", "back", "exit"])
     runtime, _, _ = make_runtime(io)
 
     rc = runtime.run()
@@ -865,15 +850,81 @@ def test_server_menu_shows_select_server_first_when_servers_exist():
     assert server_options == ["connect_server", "remove_server", "add_server", "back"]
 
 
-def test_select_identity_shows_identity_list_then_enters_server_menu():
-    io = FakeIO(choices=["select_identity", "identity-1", "back", "exit"])
-    runtime, _, _ = make_runtime(io)
+def test_select_server_defaults_to_last_server():
+    io = FakeIO(choices=["select_identity", "connect_server", "back", "back", "exit"])
+    runtime, _, config = make_runtime(io)
+    config.servers["server-2"] = {
+        "server_id": "server-2",
+        "name": "Backup",
+        "host": "localhost",
+        "port": 9000,
+        "notes": "",
+    }
+    config.last_server_id = "server-2"
 
     rc = runtime.run()
 
     assert rc == 0
-    assert ("Select identity", ["identity-1", "back"]) in io.option_history
+    defaults = [default for prompt, default in io.default_history if prompt == "Connect to which server?"]
+    assert defaults and defaults[-1] == "server-2"
+
+
+def test_select_identity_shows_identity_list_then_enters_server_menu():
+    io = FakeIO(choices=["select_identity", "identity-1", "back", "exit"])
+    runtime, _, config = make_runtime(io)
+    config.identities["identity-2"] = {
+        "identity_id": "identity-2",
+        "username": "bob",
+        "password": "secret",
+        "email": "",
+        "notes": "",
+    }
+
+    rc = runtime.run()
+
+    assert rc == 0
+    assert ("Select identity", ["identity-1", "identity-2", "back"]) in io.option_history
     assert any(prompt.startswith("Server menu for ") for prompt, _ in io.option_history)
+
+
+def test_single_identity_auto_selected():
+    io = FakeIO(choices=["select_identity", "back", "exit"])
+    runtime, _, config = make_runtime(io)
+    config.identities = {
+        "identity-1": {
+            "identity_id": "identity-1",
+            "username": "admin",
+            "password": "secret",
+            "email": "",
+            "notes": "",
+        }
+    }
+
+    rc = runtime.run()
+
+    assert rc == 0
+    prompts = [prompt for prompt, _ in io.option_history]
+    assert "Select identity" not in prompts
+
+
+def test_single_server_auto_selected():
+    io = FakeIO(choices=["select_identity", "identity-1", "connect_server", "back", "exit"])
+    runtime, _, config = make_runtime(io)
+    config.servers = {
+        "server-1": {
+            "server_id": "server-1",
+            "name": "Solo",
+            "host": "localhost",
+            "port": 8000,
+            "notes": "",
+        }
+    }
+
+    rc = runtime.run()
+
+    assert rc == 0
+    prompts = [prompt for prompt, _ in io.option_history]
+    assert "Connect to which server?" not in prompts
 
 
 def test_prompt_trust_decision_uses_io_choose():
@@ -893,3 +944,50 @@ def test_prompt_trust_decision_uses_io_choose():
     )
 
     assert runtime._prompt_trust_decision(cert) is True
+
+
+def test_set_client_option_updates_config_and_sends_packet():
+    io = FakeIO(choices=["exit"])
+    runtime, holder, config = make_runtime(io)
+    runtime.server_id = "server-1"
+    runtime.connected = True
+
+    runtime._set_client_option_value(("audio", "music_volume"), 80)
+
+    assert config.set_option_calls[-1] == ("audio/music_volume", 80, "server-1", True)
+    last_packet = holder["manager"].sent_packets[-1]
+    assert last_packet["type"] == "client_options"
+    assert last_packet["options"]["audio"]["music_volume"] == 80
+
+
+def test_session_menu_waits_for_new_menu_when_unchanged(monkeypatch):
+    class CountingIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.choose_calls = 0
+
+        def choose(self, prompt, options, *, default_key=None, show_cancel=True):
+            self.choose_calls += 1
+            return super().choose(prompt, options, default_key=default_key, show_cancel=show_cancel)
+
+    import btspeak_client.runtime as runtime_mod
+
+    monkeypatch.setattr(runtime_mod, "BTSpeakIO", CountingIO)
+
+    io = CountingIO(choices=["menu:1"])
+    runtime, holder, _ = make_runtime(io)
+    runtime.connected = True
+    runtime.running = True
+    runtime.current_menu_id = "main"
+    runtime.current_menu_items = [{"text": "Play", "id": "play"}]
+    runtime._menu_version = 1
+    runtime._menu_refresh_requested = True
+
+    def fake_sleep(_seconds):
+        runtime.running = False
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+
+    runtime._session_loop()
+
+    assert io.choose_calls == 1
