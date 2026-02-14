@@ -6,7 +6,7 @@ from .base import User, MenuItem, EscapeBehavior, TrustLevel, generate_uuid
 from .preferences import UserPreferences
 
 if TYPE_CHECKING:
-    from ..network.websocket_server import ClientConnection
+    from ...network.websocket_server import ClientConnection
 
 
 class NetworkUser(User):

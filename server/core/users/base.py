@@ -6,7 +6,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 import uuid as uuid_module
 
-from ..messages.localization import Localization
+from ...messages.localization import Localization
 
 if TYPE_CHECKING:
     from .preferences import UserPreferences

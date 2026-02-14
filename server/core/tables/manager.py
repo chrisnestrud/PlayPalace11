@@ -6,7 +6,7 @@ import uuid
 from .table import Table
 
 if TYPE_CHECKING:
-    from ..users.base import User
+    from server.core.users.base import User
 
 
 class TableManager:

@@ -7,7 +7,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from server.core.tables.table import Table
-from ..users.base import TrustLevel
+from server.core.users.base import TrustLevel
 
 
 @dataclass

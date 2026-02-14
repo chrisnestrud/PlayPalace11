@@ -9,7 +9,7 @@ from pathlib import Path
 MAX_ABSOLUTE = "B"
 MAX_MODULES = "B"
 MAX_AVERAGE = "B"
-TARGETS = ["server", "client"]
+TARGETS = ["server", "clients/desktop"]
 
 
 def main() -> int:

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 # Re-export MenuItem from users.base for convenience
-from ..users.base import MenuItem
+from server.core.users.base import MenuItem
 
 
 @dataclass

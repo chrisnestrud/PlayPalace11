@@ -5,7 +5,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..games.base import Game, Player
+    from server.games.base import Game, Player
 
 
 class KeybindScope(Enum):

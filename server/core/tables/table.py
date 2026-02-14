@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 from mashumaro.mixins.json import DataClassJSONMixin
 
 if TYPE_CHECKING:
-    from ..games.base import Game
-    from ..users.base import User
+    from server.games.base import Game
+    from server.core.users.base import User
 
 
 @dataclass
