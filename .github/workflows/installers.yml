@@ -176,7 +176,7 @@ jobs:
           $env:PATH += ";" + (Join-Path $env:USERPROFILE ".dotnet\tools")
           New-Item -ItemType Directory -Force -Path installer/dist | Out-Null
           Push-Location installer/windows/wix
-          wix build PlayPalace.wxs -arch x64 -loc locales/en-us.wxl -ext WixToolset.Util.wixext/4.0.2 -ext WixToolset.UI.wixext/4.0.2 -out ../../dist/PlayPalace.msi
+          wix build PlayPalace.wxs -arch x64 -loc locales/en-us.wxl -ext WixToolset.Util.wixext -ext WixToolset.UI.wixext -out ../../dist/PlayPalace.msi
           Pop-Location
 
       - name: Upload MSI artifact
