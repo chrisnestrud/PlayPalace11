@@ -19,5 +19,8 @@ dependencies = [
 [project.scripts]
 playpalace-client = "client:main"
 
+[tool.uv]
+build-constraint-dependencies = ["setuptools<70"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["."]
