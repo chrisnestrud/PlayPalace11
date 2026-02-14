@@ -206,9 +206,12 @@ class PigGame(PushYourLuckBotMixin, ActionGuardMixin, Game):
 
         self.broadcast_l("pig-rolls", player=player.name)
         self.play_sound("game_pig/roll.ogg")
+
+        # Jolt the rolling player to pause before next action
+        BotHelper.jolt_bot(player, ticks=random.randint(10, 20))  # nosec B311
         roll_msg = Localization.get(locale, "pig-rolls", player=player.name)
 
-        roll = random.randint(1, self.options.dice_sides)
+        roll = random.randint(1, self.options.dice_sides)  # nosec B311
 
         if roll == 1:
             # Bust!
@@ -483,5 +486,5 @@ class PigGame(PushYourLuckBotMixin, ActionGuardMixin, Game):
 
     def end_turn(self, jolt_min: int = 20, jolt_max: int = 30) -> None:
         """Override to use Pig's turn advancement logic."""
-        BotHelper.jolt_bots(self, ticks=random.randint(jolt_min, jolt_max))
+        BotHelper.jolt_bots(self, ticks=random.randint(jolt_min, jolt_max))  # nosec B311
         self._on_turn_end()

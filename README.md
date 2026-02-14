@@ -29,7 +29,7 @@ Once inside the shell, use the helper scripts under `scripts/` (documented below
 
 ### Running the Server
 
-PlayPalace always reads configuration from `server/config.toml`. On a fresh clone, copy the template once and edit it to suit your environment. See [Server Configuration](#server-configuration) for descriptions of each knob.
+PlayPalace always reads configuration from `server/config.toml` when run from source. On Windows installs produced by the MSI, the server instead looks for `%PROGRAMDATA%\PlayPalace\config.toml`. The installer copies `config.example.toml` into that directory the first time and future updates preserve any edits. See [Server Configuration](#server-configuration) for descriptions of each knob.
 
 ```bash
 cd server
@@ -99,6 +99,12 @@ The client requires wxPython and a few other dependencies from v10.
 The client supports both `ws://` and `wss://` connections. When connecting to a server with SSL enabled, enter the server address with the `wss://` prefix (e.g., `wss://example.com`). The client will handle SSL certificate validation automatically.
 Use the **Server Manager** button on the login screen to add/edit servers (name, host, port, notes) and manage saved accounts for each server. You can add `localhost` for local testing.
 
+### Windows Packaging (Work in Progress)
+
+To produce a single MSI that ships both the PyInstaller-built client and server, run `client/build.ps1` and `server/build.ps1`, then follow the WiX v4 instructions in `installer/windows/README.md`. The MSI installs binaries under `Program Files\PlayPalace`, copies configuration into `%PROGRAMDATA%\PlayPalace\config.toml`, and registers the server as a Windows service with a post-install PowerShell helper that applies the installer’s host/port/SSL inputs. Branding assets and the final configuration wizard are still placeholders—see the installer README for current gaps.
+
+Linux packaging work has begun too: `installer/linux/scripts/build_deb.sh`, `build_rpm.sh`, and `build_arch.sh` produce basic `.deb`, `.rpm`, and Arch packages (client and server separately). See `installer/linux/README.md` for details.
+
 ### Packet Schema Validation
 
 Packet contracts are defined once in `server/network/packet_models.py` using Pydantic. Whenever you add or edit packet fields, regenerate the mirrored JSON schema files (used by both the server and client validators) with:
@@ -114,9 +120,20 @@ This command rewrites `server/packet_schema.json` and `client/packet_schema.json
 
 PlayPalace now enforces TLS hostname and certificate verification for all `wss://` connections. When the server presents an unknown or self-signed certificate, the client shows the certificate details (CN, SANs, issuer, validity window, and SHA-256 fingerprint) and lets you explicitly trust it. Trusted certificates are pinned per server entry—subsequent connections will only succeed if the fingerprint matches, and you can remove a stored certificate from the Server Manager dialog at any time.
 
+#### Token-Based Auth Flow
+
+PlayPalace uses short-lived access tokens (1 hour by default) and refresh tokens to avoid sending passwords after the initial login. The login flow is:
+
+1. The client sends `authorize` with username + password (or an existing access token if it is still valid).
+2. The server responds with `authorize_success`, including the access token and a refresh token.
+3. On reconnect, if the access token is expired, the client sends `refresh_session` with the stored refresh token.
+4. The server rotates the refresh token and returns `refresh_session_success` with new tokens.
+
+Refresh tokens are stored in the client identities file (same storage used for saved accounts). Access tokens remain in memory only.
+
 ### Server Configuration
 
-After the first server launch creates `server/config.toml`, edit that file (or re-copy `config.example.toml` if you need a fresh baseline) to adjust behavior. Alongside the existing `[virtual_bots]` settings, the `[auth]` section lets you clamp username and password lengths that the server will accept:
+After the first server launch creates `server/config.toml` (or `%PROGRAMDATA%\PlayPalace\config.toml` on Windows installs), edit that file (or re-copy `config.example.toml` if you need a fresh baseline) to adjust behavior. Alongside the existing `[virtual_bots]` settings, the `[auth]` section lets you clamp username and password lengths that the server will accept:
 
 ```toml
 [auth]
@@ -124,15 +141,19 @@ username_min_length = 3
 username_max_length = 32
 password_min_length = 8
 password_max_length = 128
+refresh_token_ttl_seconds = 2592000
 
 [auth.rate_limits]
 login_per_minute = 5
 login_failures_per_minute = 3
 registration_per_minute = 2
+refresh_per_minute = 10
+refresh_window_seconds = 60
 # Optional sliding-window overrides (defaults: 60s each)
 # login_window_seconds = 60
 # login_failure_window_seconds = 60
 # registration_window_seconds = 60
+# refresh_window_seconds = 60
 ```
 
 If the `[auth]` table is omitted, PlayPalace falls back to the defaults shown above. Adjust these values to match your policies (for example, force longer passwords on public deployments).
@@ -148,7 +169,7 @@ allow_insecure_ws = false      # force TLS by default
 Values are in bytes and map directly to the `max_size` setting used by the underlying websockets server.
 Set `allow_insecure_ws` to `true` only for trusted development setups where TLS certificates are unavailable; the server will refuse to start without TLS when this flag is `false`, and it will print a loud warning whenever it runs in plaintext mode.
 You cannot combine `allow_insecure_ws = true` with `--ssl-cert/--ssl-key`; pick either plaintext development mode or full TLS.
-`[auth.rate_limits]` caps how many login attempts each IP can make per minute, how many failed attempts a specific username can accrue, and how many registrations are allowed per minute from the same IP. Setting any of the limits to `0` disables that particular throttle.
+`[auth.rate_limits]` caps how many login attempts each IP can make per minute, how many failed attempts a specific username can accrue, how many registrations are allowed per minute from the same IP, and how often refresh tokens may be exchanged. Setting any of the limits (or the corresponding optional `*_window_seconds` overrides) to `0` disables that particular throttle.
 
 #### Guided Virtual Bots
 

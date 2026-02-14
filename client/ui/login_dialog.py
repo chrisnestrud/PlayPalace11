@@ -20,7 +20,10 @@ class LoginDialog(wx.Dialog):
         self.config_manager = ConfigManager()
 
         self.username = ""
-        self.password = ""
+        # Placeholder for user-entered password.
+        self.user_input_value = str()
+        self.refresh_token = None
+        self.refresh_expires_at = None
         self.server_id = None
         self.account_id = None
         self.server_url = None
@@ -209,7 +212,9 @@ class LoginDialog(wx.Dialog):
         self.server_id = server_id
         self.account_id = account_id
         self.username = account.get("username", "")
-        self.password = account.get("password", "")
+        self.user_input_value = account.get("password", "")
+        self.refresh_token = account.get("refresh_token")
+        self.refresh_expires_at = account.get("refresh_expires_at")
         self.server_url = self.config_manager.get_server_url(server_id)
 
         # Save last used server and account
@@ -236,7 +241,7 @@ class LoginDialog(wx.Dialog):
 
         from .registration_dialog import RegistrationDialog
 
-        dlg = RegistrationDialog(self, server_url)
+        dlg = RegistrationDialog(self, server_url, server_id=server_id)
         dlg.ShowModal()
         dlg.Destroy()
 
@@ -248,8 +253,11 @@ class LoginDialog(wx.Dialog):
         """Get the login credentials."""
         return {
             "username": self.username,
-            "password": self.password,
+            "password": self.user_input_value,
+            "refresh_token": self.refresh_token,
+            "refresh_expires_at": self.refresh_expires_at,
             "server_url": self.server_url,
             "server_id": self.server_id,
+            "account_id": self.account_id,
             "config_manager": self.config_manager,
         }

@@ -26,6 +26,7 @@ class ClientConnection:
     address: str
     username: str | None = None
     authenticated: bool = False
+    replaced: bool = False
 
     async def send(self, packet: dict) -> None:
         """Send a packet to this client."""
@@ -46,8 +47,8 @@ class ClientConnection:
         """Close this connection."""
         try:
             await self.websocket.close()
-        except Exception:
-            pass
+        except (OSError, RuntimeError, websockets.exceptions.ConnectionClosed) as exc:
+            PACKET_LOGGER.debug("Failed to close websocket: %s", exc)
 
 
 class WebSocketServer:

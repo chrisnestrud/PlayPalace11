@@ -24,6 +24,8 @@ class GameCommunicationMixin:
         for player in self.players:
             if player is exclude:
                 continue
+            if hasattr(self, "record_transcript_event"):
+                self.record_transcript_event(player, text, buffer)
             user = self.get_user(player)
             if user:
                 user.speak(text, buffer)
@@ -40,6 +42,10 @@ class GameCommunicationMixin:
             if player is exclude:
                 continue
             user = self.get_user(player)
+            locale = user.locale if user else "en"
+            localized = Localization.get(locale, message_id, **kwargs)
+            if hasattr(self, "record_transcript_event"):
+                self.record_transcript_event(player, localized, buffer)
             if user:
                 user.speak_l(message_id, buffer, **kwargs)
 
@@ -65,6 +71,10 @@ class GameCommunicationMixin:
             **kwargs: Additional arguments passed to all speak_l calls.
         """
         user = self.get_user(player)
+        locale = user.locale if user else "en"
+        personal_text = Localization.get(locale, personal_message_id, **kwargs)
+        if hasattr(self, "record_transcript_event"):
+            self.record_transcript_event(player, personal_text, buffer)
         if user:
             user.speak_l(personal_message_id, buffer, **kwargs)
 
@@ -72,6 +82,10 @@ class GameCommunicationMixin:
             if p is player:
                 continue
             u = self.get_user(p)
+            locale = u.locale if u else "en"
+            others_text = Localization.get(locale, others_message_id, player=player.name, **kwargs)
+            if hasattr(self, "record_transcript_event"):
+                self.record_transcript_event(p, others_text, buffer)
             if u:
                 u.speak_l(others_message_id, buffer, player=player.name, **kwargs)
 

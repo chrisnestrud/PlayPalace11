@@ -92,9 +92,17 @@ class NetworkUser(User):
         """Return the underlying client connection."""
         return self._connection
 
+    def set_connection(self, connection: "ClientConnection") -> None:
+        """Update the active client connection."""
+        self._connection = connection
+
     def _queue_packet(self, packet: dict[str, Any]) -> None:
         """Queue a packet to be sent to the client."""
         self._message_queue.append(packet)
+
+    def queue_packet(self, packet: dict[str, Any]) -> None:
+        """Public helper to queue a raw packet for delivery."""
+        self._queue_packet(packet)
 
     def get_queued_messages(self) -> list[dict[str, Any]]:
         """Get and clear the message queue."""
