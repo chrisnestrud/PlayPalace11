@@ -8,7 +8,7 @@ version = "11.0.0"
 description = "PlayPalace v11 Game Client"
 requires-python = ">=3.11"
 dependencies = [
-    "wxPython>=4.2.0",
+    "wxPython>=4.2.5",
     "accessible-output2>=0.16",
     "websockets>=14.0",
     "sound-lib>=0.2.2",

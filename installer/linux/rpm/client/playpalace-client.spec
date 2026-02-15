@@ -16,12 +16,12 @@ Placeholder spec for the wxPython client. Copy the PyInstaller onedir
 into /opt/playpalace/client/ and install desktop resources.
 
 %prep
-%setup -q
+%setup -q -n PlayPalaceClient
 
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/opt/playpalace/client
-cp -a PlayPalaceClient/* %{buildroot}/opt/playpalace/client/
+cp -a * %{buildroot}/opt/playpalace/client/
 mkdir -p %{buildroot}%{_bindir}
 cat <<'LAUNCH' > %{buildroot}%{_bindir}/playpalace-client
 #!/bin/sh

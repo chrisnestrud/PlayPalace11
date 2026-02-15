@@ -1,3 +1,5 @@
+%{!?_unitdir: %define _unitdir /usr/lib/systemd/system}
+
 Name:           playpalace-server
 Version:        0.0.0
 Release:        1%{?dist}
@@ -16,12 +18,12 @@ Placeholder RPM spec for the PyInstaller-built PlayPalace server. Replace
 Source0 with the packaged artifact and update metadata before shipping.
 
 %prep
-%setup -q
+%setup -q -n PlayPalaceServer
 
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/opt/playpalace/server
-cp -a PlayPalaceServer/* %{buildroot}/opt/playpalace/server/
+cp -a * %{buildroot}/opt/playpalace/server/
 mkdir -p %{buildroot}%{_unitdir}
 install -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}/playpalace-server.service
 mkdir -p %{buildroot}%{_licensedir}/playpalace-server
