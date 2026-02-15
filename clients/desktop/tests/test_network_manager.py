@@ -1,9 +1,9 @@
 import asyncio
 import json
-import ssl
 import types
 
 import pytest
+import websockets
 
 import network_manager as nm_mod
 from certificate_prompt import CertificateInfo
@@ -137,14 +137,56 @@ def test_verify_pinned_certificate_accepts_matching():
     assert ws.closed is False
 
 
-def test_verify_pinned_certificate_rejects_mismatch():
-    nm = NetworkManager(main_window=DummyMainWindow())
+def test_verify_pinned_certificate_decline_replacement_closes_socket():
+    window = DummyMainWindow()
+    window.config_manager.trusted_entry = {
+        "fingerprint": "1111",
+        "pem": "old",
+        "host": "example.com",
+    }
+    nm = NetworkManager(main_window=window)
     nm._extract_peer_certificate = lambda ws: ("FFFF", {}, "pem")  # type: ignore[attr-defined]
-    nm._get_trusted_certificate_entry = lambda: {"fingerprint": "1111"}  # type: ignore[attr-defined]
+    nm._prompt_certificate_change = lambda prev, curr: False  # type: ignore[attr-defined]
+    nm._certificate_info_from_entry = lambda entry, host: make_certificate_info(  # type: ignore[attr-defined]
+        host=host,
+        fingerprint="11:11",
+        fingerprint_hex="1111",
+    )
+    nm._build_certificate_info = lambda cert_dict, fingerprint_hex, pem, host: make_certificate_info(  # type: ignore[attr-defined]
+        host=host,
+        fingerprint="FF:FF",
+        fingerprint_hex=fingerprint_hex,
+    )
     ws = DummyWebsocket()
-    with pytest.raises(ssl.SSLError):
+    with pytest.raises(nm_mod.TLSCertificateChangeDeclinedError):
         asyncio.run(nm._verify_pinned_certificate(ws, "wss://example.com"))
     assert ws.closed is True
+
+
+def test_verify_pinned_certificate_accepts_replacement_updates_store():
+    window = DummyMainWindow()
+    window.config_manager.trusted_entry = {
+        "fingerprint": "1111",
+        "pem": "old",
+        "host": "example.com",
+    }
+    nm = NetworkManager(main_window=window)
+    nm._extract_peer_certificate = lambda ws: ("FFFF", {}, "pem")  # type: ignore[attr-defined]
+    nm._prompt_certificate_change = lambda prev, curr: True  # type: ignore[attr-defined]
+    nm._certificate_info_from_entry = lambda entry, host: make_certificate_info(  # type: ignore[attr-defined]
+        host=host,
+        fingerprint="11:11",
+        fingerprint_hex="1111",
+    )
+    nm._build_certificate_info = lambda cert_dict, fingerprint_hex, pem, host: make_certificate_info(  # type: ignore[attr-defined]
+        host=host,
+        fingerprint="FF:FF",
+        fingerprint_hex=fingerprint_hex,
+    )
+    ws = DummyWebsocket()
+    asyncio.run(nm._verify_pinned_certificate(ws, "wss://example.com"))
+    entry = window.config_manager.get_trusted_certificate("server-123")
+    assert entry["fingerprint"] == "FFFF"
 
 
 def test_store_and_get_trusted_certificate_round_trip():

@@ -16,7 +16,12 @@ import ssl
 from jsonschema import ValidationError as SchemaValidationError
 from websockets.asyncio.client import connect
 
-from certificate_prompt import CertificatePromptDialog, CertificateInfo
+from certificate_prompt import (
+    CertificatePromptDialog,
+    CertificateInfo,
+    CertificateChangePromptDialog,
+    CertificateChangePromptInfo,
+)
 from packet_validator import validate_incoming, validate_outgoing
 
 LOG = logging.getLogger(__name__)
@@ -25,7 +30,11 @@ LOG = logging.getLogger(__name__)
 class TLSUserDeclinedError(Exception):
     """Raised when the user declines to trust a presented TLS certificate."""
 
-    pass
+
+class TLSCertificateChangeDeclinedError(TLSUserDeclinedError):
+    """Raised when the user declines a replacement certificate."""
+
+
 
 
 class NetworkManager:
@@ -300,14 +309,20 @@ class NetworkManager:
         if not entry:
             return
 
-        fingerprint_hex, _, _ = self._extract_peer_certificate(websocket)
+        fingerprint_hex, cert_dict, pem = self._extract_peer_certificate(websocket)
         if not fingerprint_hex:
             raise ssl.SSLError("Unable to read peer certificate.")
 
         expected = entry.get("fingerprint", "").upper()
         if expected != fingerprint_hex.upper():
-            await websocket.close()
-            raise ssl.SSLError("Trusted certificate fingerprint mismatch.")
+            await self._handle_certificate_mismatch(
+                websocket,
+                server_url,
+                entry,
+                fingerprint_hex,
+                cert_dict or {},
+                pem,
+            )
 
     async def _fetch_certificate_info(self, server_url: str) -> CertificateInfo | None:
         """Retrieve certificate information without enforcing trust."""
@@ -332,6 +347,31 @@ class NetworkManager:
                 except (OSError, RuntimeError, websockets.exceptions.ConnectionClosed) as exc:
                     LOG.debug("Failed to close websocket during certificate fetch: %s", exc)
 
+    async def _handle_certificate_mismatch(
+        self,
+        websocket: websockets.WebSocketClientProtocol,
+        server_url: str,
+        entry: dict,
+        fingerprint_hex: str,
+        cert_dict: dict,
+        pem: str | None,
+    ) -> None:
+        """Prompt the user about a changed certificate and refresh trust if approved."""
+        if not pem:
+            await websocket.close()
+            raise ssl.SSLError("Unable to read peer certificate.")
+
+        host = entry.get("host") or self._get_server_host(server_url)
+        new_info = self._build_certificate_info(cert_dict, fingerprint_hex.upper(), pem, host)
+        previous_info = self._certificate_info_from_entry(entry, host)
+
+        if not self._prompt_certificate_change(previous_info, new_info):
+            await websocket.close()
+            raise TLSCertificateChangeDeclinedError("User declined replacement certificate.")
+
+        self._store_trusted_certificate(new_info)
+        self._log_certificate_change(previous_info, new_info)
+
     def _prompt_trust_decision(self, cert_info: CertificateInfo) -> bool:
         """Show the trust dialog on the main thread."""
         decision = {"trust": False}
@@ -347,6 +387,58 @@ class NetworkManager:
         wx.CallAfter(_show_dialog)
         done.wait()
         return decision["trust"]
+
+    def _prompt_certificate_change(
+        self, previous: CertificateInfo | None, current: CertificateInfo
+    ) -> bool:
+        """Present certificate replacement details and return True if user accepts."""
+        decision = {"trust": False}
+        done = threading.Event()
+        host = current.host or (previous.host if previous else "")
+
+        def _show_dialog():
+            dlg = CertificateChangePromptDialog(
+                self.main_window,
+                CertificateChangePromptInfo(host=host, previous=previous, current=current),
+            )
+            result = dlg.ShowModal()
+            dlg.Destroy()
+            decision["trust"] = result == wx.ID_OK
+            done.set()
+
+        wx.CallAfter(_show_dialog)
+        done.wait()
+        return decision["trust"]
+
+    def _certificate_info_from_entry(
+        self, entry: dict, host: str
+    ) -> CertificateInfo | None:
+        """Recreate CertificateInfo from persisted metadata."""
+        pem = entry.get("pem")
+        fingerprint_hex = entry.get("fingerprint")
+        if not pem or not fingerprint_hex:
+            return None
+        cert_dict = self._decode_certificate_dict(pem) or {}
+        return self._build_certificate_info(
+            cert_dict,
+            fingerprint_hex.upper(),
+            pem,
+            host or entry.get("host") or "",
+        )
+
+    def _log_certificate_change(
+        self, previous: CertificateInfo | None, current: CertificateInfo
+    ) -> None:
+        """Log certificate replacement details to the activity feed if available."""
+        handler = getattr(self.main_window, "add_history", None)
+        if not handler:
+            return
+        old_fp = previous.fingerprint if previous else "(unknown)"
+        message = (
+            f"Trusted new certificate for {current.host or 'server'}: "
+            f"{old_fp} -> {current.fingerprint}"
+        )
+        wx.CallAfter(handler, message, "activity")
 
     def _store_trusted_certificate(self, cert_info: CertificateInfo) -> None:
         """Persist the trusted certificate metadata via ConfigManager."""
