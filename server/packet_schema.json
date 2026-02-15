@@ -929,6 +929,18 @@
       "DisconnectPacket": {
         "additionalProperties": false,
         "properties": {
+          "auth_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Auth Reason"
+          },
           "message": {
             "anyOf": [
               {

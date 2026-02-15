@@ -396,3 +396,51 @@ def test_connect_falls_back_to_password_when_refresh_expired(monkeypatch):
     packet = json.loads(ws.sent[0])
     assert packet["type"] == "authorize"
     assert packet["password"] == "pw"
+
+
+def test_handle_refresh_failure_forces_password_once():
+    nm = NetworkManager(main_window=RecordingMainWindow())
+    nm.session_token = "access"
+    nm.session_expires_at = 100
+    nm.refresh_token = "refresh"
+    nm.refresh_expires_at = 200
+
+    nm._handle_refresh_failure({"type": "refresh_session_failure", "message": "expired"})
+
+    assert nm.session_token is None
+    assert nm.session_expires_at is None
+    assert nm.refresh_token is None
+    assert nm.refresh_expires_at is None
+    assert nm._prefer_password_auth_once is True
+
+
+def test_connect_ignores_stored_refresh_after_refresh_failure(monkeypatch):
+    window = RecordingMainWindow()
+    nm = NetworkManager(main_window=window)
+    nm._prefer_password_auth_once = True
+
+    class DummyThread:
+        def __init__(self, target=None, args=None, daemon=None):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+            self.started = False
+
+        def is_alive(self):
+            return False
+
+        def start(self):
+            self.started = True
+
+    monkeypatch.setattr(nm_mod.threading, "Thread", DummyThread)
+
+    assert nm.connect(
+        "wss://example",
+        "alice",
+        "pw",
+        refresh_token="stale-refresh-token",
+        refresh_expires_at=9999999999,
+    )
+    assert nm.refresh_token is None
+    assert nm.refresh_expires_at is None
+    assert nm._prefer_password_auth_once is False

@@ -466,7 +466,10 @@ async def test_refresh_session_failure_disconnects(server):
     await server._handle_refresh_session(client, {"refresh_token": "refresh-token", "username": "alice"})
 
     assert any(p.get("type") == "refresh_session_failure" for p in client.sent)
-    assert any(p.get("type") == "disconnect" for p in client.sent)
+    disconnect = next(p for p in client.sent if p.get("type") == "disconnect")
+    assert disconnect["reconnect"] is True
+    assert disconnect.get("return_to_login", False) is False
+    assert disconnect["auth_reason"] == "refresh_token_invalid"
 
 
 @pytest.mark.asyncio
@@ -479,7 +482,10 @@ async def test_refresh_session_rate_limited(server):
     client.sent.clear()
     await server._handle_refresh_session(client, {"refresh_token": "refresh-token", "username": "alice"})
 
-    assert any(p.get("type") == "disconnect" for p in client.sent)
+    disconnect = next(p for p in client.sent if p.get("type") == "disconnect")
+    assert disconnect["reconnect"] is False
+    assert disconnect["return_to_login"] is True
+    assert disconnect["auth_reason"] == "rate_limited"
 
 
 def test_auth_limits_loaded_from_config(tmp_path):

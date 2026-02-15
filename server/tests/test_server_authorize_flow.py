@@ -120,7 +120,9 @@ async def test_authorize_wrong_password_records_failure(monkeypatch, server):
 
     assert "alice" in server._login_attempts_user
     # should send disconnect with message
-    assert any(p.get("type") == "disconnect" for p in client.sent)
+    disconnect = next(p for p in client.sent if p.get("type") == "disconnect")
+    assert disconnect["return_to_login"] is True
+    assert disconnect["auth_reason"] == "invalid_credentials"
 
 
 def test_sanitize_credentials_handles_none():
