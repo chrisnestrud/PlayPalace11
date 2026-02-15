@@ -37,6 +37,12 @@ from .users.network_user import NetworkUser
 from .users.base import MenuItem, EscapeBehavior, TrustLevel
 from .users.preferences import UserPreferences, DiceKeepingStyle
 from ..games.registry import GameRegistry, get_game_class
+from shared.debug_logging import (
+    DebugLogContext,
+    estimate_packet_bytes,
+    install_json_logger,
+    summarize_event_packet,
+)
 from ..messages.localization import Localization
 from ..network.packet_models import CLIENT_TO_SERVER_PACKET_ADAPTER
 
@@ -45,6 +51,7 @@ VERSION = "11.0.0"
 BOOTSTRAP_WARNING_ENV = "PLAYPALACE_SUPPRESS_BOOTSTRAP_WARNING"
 PACKET_LOGGER = logging.getLogger("playpalace.packets")
 LOG = logging.getLogger("playpalace.server")
+EVENT_LOGGER = logging.getLogger("playpalace.events")
 
 DEFAULT_USERNAME_MIN_LENGTH = 3
 DEFAULT_USERNAME_MAX_LENGTH = 32
@@ -117,6 +124,7 @@ class Server(AdministrationMixin):
         ssl_key: str | Path | None = None,
         config_path: str | Path | None = None,
         preload_locales: bool = False,
+        debug_events: bool = False,
     ):
         """Initialize the server and core managers.
 
@@ -149,6 +157,8 @@ class Server(AdministrationMixin):
         self._tables._server = self  # Enable callbacks from TableManager
         self._ws_server: WebSocketServer | None = None
         self._tick_scheduler: TickScheduler | None = None
+        self._debug_events = debug_events
+        self._event_logger = EVENT_LOGGER
 
         # User tracking
         self._users: dict[str, NetworkUser] = {}  # username -> NetworkUser
@@ -1691,14 +1701,7 @@ class Server(AdministrationMixin):
         # Check if user is in a table - delegate all events to game
         table = self._tables.find_user_table(username)
         if table and table.game:
-            player = table.game.get_player_by_id(user.uuid)
-            if player:
-                table.game.handle_event(player, packet)
-                # Check if player left the game (user replaced by bot or removed)
-                game_user = table.game._users.get(user.uuid)
-                if game_user is not user:
-                    table.remove_member(username)
-                    self._show_main_menu(user)
+            self._forward_game_event(user, table, packet)
             return
 
         await self._dispatch_menu_selection(user, selection_id, state, current_menu)
@@ -3435,14 +3438,7 @@ class Server(AdministrationMixin):
                 user.speak_l(key, count=len(players), users=names)
             return
         if table and table.game and user:
-            player = table.game.get_player_by_id(user.uuid)
-            if player:
-                table.game.handle_event(player, packet)
-                # Check if player left the game (user replaced by bot or removed)
-                game_user = table.game._users.get(user.uuid)
-                if game_user is not user:
-                    table.remove_member(username)
-                    self._show_main_menu(user)
+            self._forward_game_event(user, table, packet)
 
     async def _handle_editbox(self, client: ClientConnection, packet: dict) -> None:
         """Handle editbox submissions.
@@ -3481,14 +3477,92 @@ class Server(AdministrationMixin):
         # Forward to game if user is in a table
         table = self._tables.find_user_table(username)
         if table and table.game:
-            player = table.game.get_player_by_id(user.uuid)
-            if player:
-                table.game.handle_event(player, packet)
-                # Check if player left the game (user replaced by bot or removed)
-                game_user = table.game._users.get(user.uuid)
-                if game_user is not user:
-                    table.remove_member(username)
-                    self._show_main_menu(user)
+            self._forward_game_event(user, table, packet)
+
+    def _forward_game_event(self, user: NetworkUser, table, packet: dict) -> None:
+        """Forward an input packet to the active game with optional logging."""
+        game = table.game
+        if not game:
+            return
+
+        player = game.get_player_by_id(user.uuid)
+        if not player:
+            return
+
+        if self._debug_events:
+            summary = summarize_event_packet(packet)
+            payload_size = estimate_packet_bytes(packet)
+            start = time.perf_counter()
+            self._log_event_phase(
+                user=user,
+                table=table,
+                packet_type=packet.get("type", "unknown"),
+                phase="dispatch",
+                summary=summary,
+                payload_size=payload_size,
+            )
+        else:
+            summary = {}
+            payload_size = None
+            start = None
+
+        try:
+            game.handle_event(player, packet)
+        finally:
+            if self._debug_events and start is not None:
+                duration_ms = (time.perf_counter() - start) * 1000
+                self._log_event_phase(
+                    user=user,
+                    table=table,
+                    packet_type=packet.get("type", "unknown"),
+                    phase="complete",
+                    summary=summary,
+                    payload_size=payload_size,
+                    duration_ms=duration_ms,
+                )
+            self._ensure_user_membership(user, table)
+
+    def _ensure_user_membership(self, user: NetworkUser, table) -> None:
+        """Ensure server state reflects whether a user remains at a table."""
+        game = table.game
+        if not game:
+            return
+        game_user = game._users.get(user.uuid)
+        if game_user is user:
+            return
+        table.remove_member(user.username)
+        self._show_main_menu(user)
+
+    def _log_event_phase(
+        self,
+        *,
+        user: NetworkUser,
+        table,
+        packet_type: str,
+        phase: str,
+        summary: dict[str, Any],
+        payload_size: int | None = None,
+        duration_ms: float | None = None,
+    ) -> None:
+        """Emit a structured JSON log line for an event lifecycle phase."""
+        if not self._debug_events:
+            return
+        context = DebugLogContext(
+            event=packet_type,
+            table_id=getattr(table, "table_id", None),
+            user_id=getattr(user, "uuid", None),
+            username=getattr(user, "username", None),
+            game=getattr(table, "game_type", None),
+            duration_ms=duration_ms,
+            payload_size=payload_size,
+        )
+        fields = context.to_dict()
+        fields["phase"] = phase
+        for key, value in summary.items():
+            if value is None:
+                continue
+            fields[key] = value
+        self._event_logger.debug(packet_type, extra=fields)
 
     async def _handle_chat(self, client: ClientConnection, packet: dict) -> None:
         """Handle chat message."""
@@ -3658,6 +3732,7 @@ async def run_server(
     ssl_cert: str | Path | None = None,
     ssl_key: str | Path | None = None,
     preload_locales: bool = False,
+    debug_events: bool = False,
 ) -> None:
     """Run the server.
 
@@ -3668,7 +3743,7 @@ async def run_server(
         ssl_key: Path to SSL private key file (for WSS support)
         preload_locales: Whether to block on localization compilation.
     """
-    _configure_logging()
+    _configure_logging(debug_events)
     _install_exception_handlers(asyncio.get_running_loop())
 
     config_path = get_default_config_path()
@@ -3692,6 +3767,7 @@ async def run_server(
         ssl_key=ssl_key,
         db_path=str(db_path),
         preload_locales=preload_locales,
+        debug_events=debug_events,
     )
     await server.start()
 
@@ -3705,14 +3781,20 @@ async def run_server(
         await server.stop()
 
 
-def _configure_logging() -> None:
-    """Configure server error logging."""
+def _configure_logging(debug_events: bool) -> None:
+    """Configure server logging, including optional debug event output."""
     log_dir = _ensure_var_server_dir()
     logging.basicConfig(
         filename=str(log_dir / "errors.log"),
         level=logging.ERROR,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    if debug_events:
+        install_json_logger(
+            logger_name="playpalace.events",
+            stream=sys.stdout,
+        )
 
 
 def _install_exception_handlers(loop: asyncio.AbstractEventLoop) -> None:

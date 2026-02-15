@@ -2,6 +2,7 @@ import asyncio
 import json
 import ssl
 import types
+import logging
 
 import pytest
 
@@ -281,6 +282,42 @@ def test_send_packet_failure_notifies_window(monkeypatch):
 
     assert manager.connected is False
     assert window.connection_lost == 1
+
+
+def test_send_packet_logs_debug_events(monkeypatch, caplog):
+    window = RecordingMainWindow()
+    manager = NetworkManager(main_window=window)
+    manager.connected = True
+    manager.loop = asyncio.new_event_loop()
+    manager.ws = DummyAsyncWebsocket()
+    manager.username = "tester"
+    manager.server_id = "srv-123"
+    manager._debug_events = True
+
+    def fake_run_coroutine_threadsafe(coro, used_loop):
+        used_loop.run_until_complete(coro)
+
+        class DummyFuture:
+            def result(self, timeout=None):
+                return None
+
+        return DummyFuture()
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe)
+    caplog.set_level(logging.DEBUG, "playpalace.events")
+    packet = {"type": "menu", "menu_id": "main_menu", "selection_id": "play"}
+    try:
+        assert manager.send_packet(packet) is True
+    finally:
+        manager.loop.close()
+
+    records = [rec for rec in caplog.records if rec.name == "playpalace.events"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.direction == "outgoing"
+    assert record.menu_id == "main_menu"
+    assert record.selection_id == "play"
+    assert record.username == "tester"
 
 
 def test_disconnect_waits_for_thread(monkeypatch):

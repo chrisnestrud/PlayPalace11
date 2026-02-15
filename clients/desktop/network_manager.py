@@ -18,8 +18,16 @@ from websockets.asyncio.client import connect
 
 from certificate_prompt import CertificatePromptDialog, CertificateInfo
 from packet_validator import validate_incoming, validate_outgoing
+from shared.debug_logging import (
+    DebugLogContext,
+    estimate_packet_bytes,
+    is_debug_env_enabled,
+    summarize_event_packet,
+)
 
 LOG = logging.getLogger(__name__)
+EVENT_LOGGER = logging.getLogger("playpalace.events")
+EVENT_PACKET_TYPES = {"menu", "keybind", "editbox"}
 
 
 class TLSUserDeclinedError(Exception):
@@ -52,6 +60,7 @@ class NetworkManager:
         self.refresh_token = None
         self.refresh_expires_at = None
         self._validation_errors = 0
+        self._debug_events = is_debug_env_enabled()
 
     def _validate_outgoing_packet(self, packet: dict) -> bool:
         """Validate a packet before sending; logs and blocks invalid payloads."""
@@ -508,6 +517,29 @@ class NetworkManager:
         if wait and self.thread and self.thread.is_alive():
             self.thread.join(timeout=timeout)
 
+    def _log_debug_event(self, packet: dict, *, direction: str, payload_size: int | None = None) -> None:
+        """Emit a structured log entry for outgoing/incoming packets when enabled."""
+        if not self._debug_events:
+            return
+        event_type = packet.get("type")
+        if event_type not in EVENT_PACKET_TYPES:
+            return
+        summary = summarize_event_packet(packet)
+        payload = payload_size if payload_size is not None else estimate_packet_bytes(packet)
+        context = DebugLogContext(
+            event=event_type,
+            username=self.username,
+            correlation_id=self.server_id or self.server_url,
+            payload_size=payload,
+        )
+        fields = context.to_dict()
+        fields["direction"] = direction
+        for key, value in summary.items():
+            if value is None:
+                continue
+            fields[key] = value
+        EVENT_LOGGER.debug(f"{direction}_{event_type}", extra=fields)
+
     def send_packet(self, packet):
         """
         Send packet to server.
@@ -523,6 +555,7 @@ class NetworkManager:
 
         try:
             message = json.dumps(packet)
+            self._log_debug_event(packet, direction="outgoing", payload_size=len(message))
 
             # Schedule send in the async loop
             asyncio.run_coroutine_threadsafe(self.ws.send(message), self.loop)

@@ -64,6 +64,11 @@ Examples:
         action="store_true",
         help="Block startup until all localization bundles compile (default: warm in background).",
     )
+    parser.add_argument(
+        "--debug-events",
+        action="store_true",
+        help="Enable verbose JSON event logging on stdout/stderr for troubleshooting.",
+    )
 
     args = parser.parse_args()
 
@@ -81,6 +86,7 @@ Examples:
             ssl_cert=args.ssl_cert,
             ssl_key=args.ssl_key,
             preload_locales=args.preload_locales,
+            debug_events=args.debug_events,
         )
     )
 
