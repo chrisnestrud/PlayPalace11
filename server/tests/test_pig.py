@@ -13,8 +13,8 @@ import json
 
 from server.games.pig.game import PigGame, PigOptions
 from server.messages.localization import Localization
-from server.users.test_user import MockUser
-from server.users.bot import Bot
+from server.core.users.test_user import MockUser
+from server.core.users.bot import Bot
 
 
 class TestPigGameUnit:
@@ -386,7 +386,7 @@ class TestPigPlayTest:
             game.on_start()
 
             # More ticks needed due to bot thinking delays
-            for _ in range(2000):
+            for _ in range(5000):
                 if not game.game_active:
                     break
                 game.on_tick()

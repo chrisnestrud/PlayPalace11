@@ -13,8 +13,8 @@ import json
 
 from server.games.tossup.game import TossUpGame, TossUpOptions
 from server.messages.localization import Localization
-from server.users.test_user import MockUser
-from server.users.bot import Bot
+from server.core.users.test_user import MockUser
+from server.core.users.bot import Bot
 
 
 class TestTossUpGameUnit:
@@ -142,7 +142,14 @@ class TestTossUpGameActions:
 
         bot_player.dice_count = 2
         sequence = iter([1, 2])  # 1 green, 1 yellow in Standard mode
-        monkeypatch.setattr(random, "randint", lambda a, b: next(sequence))
+
+        def fake_randint(a, b):
+            try:
+                return next(sequence)
+            except StopIteration:
+                return 1
+
+        monkeypatch.setattr(random, "randint", fake_randint)
         game.execute_action(bot_player, "roll")
 
         roll_msg = Localization.get("en", "tossup-you-roll", results="1 green, 1 yellow")

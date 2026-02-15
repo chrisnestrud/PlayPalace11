@@ -11,8 +11,8 @@ from server.games.hangin_with_friends.game import (
     HanginWithFriendsGame,
     HanginWithFriendsOptions,
 )
-from server.users.bot import Bot
-from server.users.test_user import MockUser
+from server.core.users.bot import Bot
+from server.core.users.test_user import MockUser
 
 
 class TestHanginWithFriendsUnit:
