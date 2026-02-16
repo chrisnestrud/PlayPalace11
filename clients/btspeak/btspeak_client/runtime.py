@@ -590,7 +590,9 @@ class BTSpeakClientRuntime:
             f"Valid to: {cert_info.valid_to or '(unknown)'}",
             f"Fingerprint: {cert_info.fingerprint}",
         ]
-        prompt = "Untrusted certificate\n\n" + "\n".join(minimal_lines)
+        prompt_heading = "Trust this certificate?"
+        summary_text = prompt_heading + "\n\n" + "\n".join(minimal_lines)
+        self._safe_message(summary_text, wait=False)
         options = [
             ChoiceOption("trust", "Trust certificate"),
             ChoiceOption("decline", "Decline"),
@@ -598,7 +600,7 @@ class BTSpeakClientRuntime:
         ]
         while True:
             choice = self._safe_choose(
-                prompt,
+                summary_text,
                 options,
                 default_key="decline",
             )

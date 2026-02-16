@@ -346,7 +346,12 @@ class BTSpeakIO(IOAdapter):
                         stdscr.addstr(row, 0, label[:max_x])
                 cursor_row = 1 + (index - first)
                 if 1 <= cursor_row < max_y:
-                    stdscr.move(cursor_row, 0)
+                    try:
+                        stdscr.move(cursor_row, 0)
+                    except AttributeError:
+                        pass
+                    except curses.error:
+                        pass
                 stdscr.refresh()
 
                 key = stdscr.get_wch()
