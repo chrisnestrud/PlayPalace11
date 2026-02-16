@@ -169,7 +169,7 @@ class BTSpeakClientRuntime:
     def _show_instruction_dialog(self, heading: str, instruction: str) -> None:
         message = f"{heading}\n\n{instruction}"
         try:
-            self.io.show_message(message, wait=False)
+            self.io.show_message(message, wait=True)
         except TypeError:
             # Older IO adapters may not accept wait; fall back safely.
             try:
@@ -577,34 +577,37 @@ class BTSpeakClientRuntime:
                 return
 
     def _prompt_trust_decision(self, cert_info: CertificateInfo) -> bool:
-        lines = [
+        minimal_lines = [
             f"Host: {cert_info.host}",
             f"Common name: {cert_info.common_name or '(none)'}",
+            f"Host match: {'yes' if cert_info.matches_host else 'no'}",
+        ]
+        detail_lines = [
+            *minimal_lines,
             f"Subject alt names: {', '.join(cert_info.sans) if cert_info.sans else '(none)'}",
             f"Issuer: {cert_info.issuer or '(unknown)'}",
             f"Valid from: {cert_info.valid_from or '(unknown)'}",
             f"Valid to: {cert_info.valid_to or '(unknown)'}",
-            f"Host match: {'yes' if cert_info.matches_host else 'no'}",
             f"Fingerprint: {cert_info.fingerprint}",
         ]
-        details = "\n".join(lines)
-
-        try:
-            message = f"Untrusted certificate\n\n{details}"
-            self.io.show_message(message, wait=False)
-        except BaseException as exc:
-            self._debug_log(f"cert details failed: {exc!r}")
-            self._safe_notify(f"Untrusted certificate\n\n{details}")
-
-        choice = self._safe_choose(
-            "Trust this certificate? Select an option and press Enter.",
-            [
-                ChoiceOption("trust", "Trust certificate"),
-                ChoiceOption("decline", "Decline"),
-            ],
-            default_key="decline",
-        )
-        return choice == "trust"
+        prompt = "Untrusted certificate\n\n" + "\n".join(minimal_lines)
+        options = [
+            ChoiceOption("trust", "Trust certificate"),
+            ChoiceOption("decline", "Decline"),
+            ChoiceOption("details", "Show details"),
+        ]
+        while True:
+            choice = self._safe_choose(
+                prompt,
+                options,
+                default_key="decline",
+            )
+            if choice == "trust":
+                return True
+            if choice in (None, "decline"):
+                return False
+            if choice == "details":
+                self._review_buffer_pages("Certificate details", detail_lines, page_size=8)
 
     def run(self) -> int:
         self._debug_log("run: start")
@@ -707,11 +710,11 @@ class BTSpeakClientRuntime:
         if not identity_id:
             return
 
-        self._show_instruction_dialog(
-            "Remove identity confirmation",
-            "Press Enter on Dismiss, then choose Yes to remove the identity or Back to cancel.",
+        prompt = (
+            "Remove this identity?\n\n"
+            "Choose Yes to remove the identity or Back to cancel."
         )
-        if not self._confirm("Remove this identity?", default_yes=False, yes_label="Yes", no_label="Back"):
+        if not self._confirm(prompt, default_yes=False, yes_label="Yes", no_label="Back"):
             return
         self.config_manager.delete_identity(identity_id)
         self.io.notify("Identity removed.")
@@ -859,11 +862,11 @@ class BTSpeakClientRuntime:
         if not server_id:
             return
 
-        self._show_instruction_dialog(
-            "Remove server confirmation",
-            "Press Enter on Dismiss, then choose Yes to remove the server or Back to cancel.",
+        prompt = (
+            "Remove this server?\n\n"
+            "Choose Yes to remove the server or Back to cancel."
         )
-        confirmed = self._confirm("Remove this server?", default_yes=False, yes_label="Yes", no_label="Back")
+        confirmed = self._confirm(prompt, default_yes=False, yes_label="Yes", no_label="Back")
         self._debug_log(f"remove_server: confirm={confirmed!r}")
         if not confirmed:
             return

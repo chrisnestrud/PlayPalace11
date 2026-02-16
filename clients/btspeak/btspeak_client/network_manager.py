@@ -220,7 +220,12 @@ class NetworkManager:
         trust_entry = self._get_trusted_certificate_entry()
         if trust_entry:
             self._debug("net: using stored trusted certificate")
-            return await self._connect_with_trusted_certificate(server_url, trust_entry)
+            try:
+                return await self._connect_with_trusted_certificate(server_url, trust_entry)
+            except ssl.SSLError:
+                self._debug("net: trusted certificate mismatch; prompting for new trust")
+                self._emit_activity("Trusted certificate changed. Review and trust the new certificate to continue.")
+                return await self._handle_tls_failure(server_url)
 
         try:
             self._debug("net: trying default TLS verification")
@@ -268,7 +273,21 @@ class NetworkManager:
         if not server_url.startswith("wss://"):
             return True
 
-        if self._get_trusted_certificate_entry():
+        trust_entry = self._get_trusted_certificate_entry()
+        if trust_entry:
+            cert_info = self._run_coroutine_sync(self._fetch_certificate_info(server_url))
+            if cert_info is None:
+                return True
+            expected = str(trust_entry.get("fingerprint", "")).upper()
+            if expected and expected == cert_info.fingerprint_hex.upper():
+                return True
+            self._emit_activity("Trusted certificate changed. Review and trust the new certificate to continue.")
+            trust = False
+            if self.trust_prompt:
+                trust = bool(self.trust_prompt(cert_info))
+            if not trust:
+                return False
+            self._store_trusted_certificate(cert_info)
             return True
 
         try:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import sys
 
 from btspeak_client.io_adapter import ConsoleIO, ChoiceOption, BTSpeakIO
 
@@ -81,7 +82,11 @@ def test_btspeak_request_text_with_dialogs(monkeypatch, tmp_path):
     io._dialogs = FakeDialogs()
     io._use_dialogs_api = True
     io._debug_log_path = tmp_path / "log.txt"
-    io._host = object()
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+
+    io._host = FakeHost()
     assert io.request_text("Prompt", default="") == "result"
 
 
@@ -94,10 +99,40 @@ def test_btspeak_request_text_multiline_uses_request_input(monkeypatch, tmp_path
     io._dialogs = FakeDialogs()
     io._use_dialogs_api = True
     io._debug_log_path = tmp_path / "log.txt"
-    io._host = object()
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+
+    io._host = FakeHost()
 
     result = io.request_text("Prompt", default="seed", multiline=True)
     assert result == "multi line"
+
+
+def test_btspeak_request_text_uses_tui_dialog_when_available(monkeypatch, tmp_path):
+    calls = {"tui": 0, "request": 0}
+
+    class FakeDialogs:
+        def tuiDialog(self, dialog_fn, *args, **kwargs):
+            calls["tui"] += 1
+            return dialog_fn(*args, **kwargs)
+
+        def requestInput(self, *args, **kwargs):
+            calls["request"] += 1
+            return "typed"
+
+    io = BTSpeakIO.__new__(BTSpeakIO)
+    io._dialogs = FakeDialogs()
+    io._use_dialogs_api = True
+    io._debug_log_path = tmp_path / "log.txt"
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+    io._host = FakeHost()
+
+    result = io.request_text("Prompt", default="seed")
+    assert result == "typed"
+    assert calls == {"tui": 1, "request": 1}
 
 
 def test_btspeak_show_message_uses_dialog(monkeypatch, tmp_path):
@@ -111,7 +146,11 @@ def test_btspeak_show_message_uses_dialog(monkeypatch, tmp_path):
     io._dialogs = FakeDialogs()
     io._use_dialogs_api = True
     io._debug_log_path = tmp_path / "log.txt"
-    io._host = object()
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+
+    io._host = FakeHost()
 
     io.show_message("Hello", wait=False)
     assert calls["shown"] is True
@@ -147,7 +186,10 @@ def test_btspeak_choose_returns_none_on_exception(monkeypatch, tmp_path):
     io._dialogs = FakeDialogs()
     io._use_dialogs_api = True
     io._debug_log_path = tmp_path / "log.txt"
-    io._host = object()
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+    io._host = FakeHost()
 
     options = [ChoiceOption("first", "First")]
     assert io.choose("Prompt", options) is None
@@ -185,7 +227,10 @@ def test_btspeak_view_long_text_uses_view_lines(monkeypatch, tmp_path):
     io._dialogs = FakeDialogs()
     io._use_dialogs_api = True
     io._debug_log_path = tmp_path / "log.txt"
-    io._host = object()
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+    io._host = FakeHost()
 
     io.view_long_text("Title", "Body line")
     assert calls["lines"] == ["Title", "", "Body line"]
@@ -196,7 +241,10 @@ def test_btspeak_request_text_returns_none_without_dialogs(monkeypatch, tmp_path
     io._dialogs = object()
     io._use_dialogs_api = False
     io._debug_log_path = tmp_path / "log.txt"
-    io._host = object()
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+    io._host = FakeHost()
 
     assert io.request_text("Prompt") is None
 
@@ -206,7 +254,10 @@ def test_btspeak_choose_returns_none_on_empty_options(tmp_path):
     io._dialogs = object()
     io._use_dialogs_api = True
     io._debug_log_path = tmp_path / "log.txt"
-    io._host = object()
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+    io._host = FakeHost()
     assert io.choose("Prompt", []) is None
 
 
@@ -232,7 +283,10 @@ def test_btspeak_view_paged_text_returns_none_without_curses(tmp_path):
     io._dialogs = object()
     io._use_dialogs_api = True
     io._debug_log_path = tmp_path / "log.txt"
-    io._host = object()
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+    io._host = FakeHost()
 
     assert io.view_paged_text("Title", ["Line 1"]) is None
 
@@ -241,6 +295,9 @@ def test_btspeak_view_paged_text_returns_action(monkeypatch, tmp_path):
     import types
 
     class FakeDialogs:
+        def tuiDialog(self, dialog_fn, *args, **kwargs):
+            return dialog_fn(*args, **kwargs)
+
         def cursesDialog(self, draw_fn):
             class FakeScreen:
                 def getmaxyx(self):
@@ -289,3 +346,156 @@ def test_btspeak_view_paged_text_returns_action(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "BTSpeak.braille", fake_braille)
 
     assert io.view_paged_text("Title", ["Line 1", "Line 2"]) == "exit"
+
+
+def test_btspeak_choose_uses_curses_dialog_default_selection(monkeypatch, tmp_path):
+    import types
+    class FakeDialogs:
+        def tuiDialog(self, dialog_fn, *args, **kwargs):
+            return dialog_fn(*args, **kwargs)
+
+        def cursesDialog(self, draw_fn):
+            class FakeScreen:
+                def __init__(self):
+                    self.keys = ["\n"]
+
+                def getmaxyx(self):
+                    return (5, 80)
+
+                def clear(self):
+                    return None
+
+                def addstr(self, *_args, **_kwargs):
+                    return None
+
+                def refresh(self):
+                    return None
+
+                def keypad(self, _flag):
+                    return None
+
+                def get_wch(self):
+                    return self.keys.pop(0)
+
+            return draw_fn(FakeScreen())
+
+    io = BTSpeakIO.__new__(BTSpeakIO)
+    io._dialogs = FakeDialogs()
+    io._use_dialogs_api = True
+    io._debug_log_path = tmp_path / "log.txt"
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+    io._host = FakeHost()
+
+    fake_braille = types.SimpleNamespace(
+        Dot1=1,
+        Dot2=2,
+        Dot3=4,
+        Dot4=8,
+        Dot5=16,
+        Dot6=32,
+        asciiToUnicodeDots=lambda _key: "",
+        dotsToUnicode=lambda _val: "dots",
+    )
+    fake_btspeak = types.SimpleNamespace(braille=fake_braille)
+    monkeypatch.setitem(sys.modules, "BTSpeak", fake_btspeak)
+    monkeypatch.setitem(sys.modules, "BTSpeak.braille", fake_braille)
+
+    options = [ChoiceOption("first", "First"), ChoiceOption("second", "Second")]
+    assert io.choose("Prompt", options, default_key="second") == "second"
+
+
+def test_btspeak_choose_uses_curses_dialog_shortcut(monkeypatch, tmp_path):
+    import types
+    class FakeDialogs:
+        def tuiDialog(self, dialog_fn, *args, **kwargs):
+            return dialog_fn(*args, **kwargs)
+
+        def cursesDialog(self, draw_fn):
+            class FakeScreen:
+                def __init__(self):
+                    self.keys = ["b"]
+
+                def getmaxyx(self):
+                    return (5, 80)
+
+                def clear(self):
+                    return None
+
+                def addstr(self, *_args, **_kwargs):
+                    return None
+
+                def refresh(self):
+                    return None
+
+                def keypad(self, _flag):
+                    return None
+
+                def get_wch(self):
+                    return self.keys.pop(0)
+
+            return draw_fn(FakeScreen())
+
+    io = BTSpeakIO.__new__(BTSpeakIO)
+    io._dialogs = FakeDialogs()
+    io._use_dialogs_api = True
+    io._debug_log_path = tmp_path / "log.txt"
+    class FakeHost:
+        def say(self, _text, immediate=False):
+            return None
+    io._host = FakeHost()
+
+    fake_braille = types.SimpleNamespace(
+        Dot1=1,
+        Dot2=2,
+        Dot3=4,
+        Dot4=8,
+        Dot5=16,
+        Dot6=32,
+        asciiToUnicodeDots=lambda _key: "",
+        dotsToUnicode=lambda _val: "dots",
+    )
+    fake_btspeak = types.SimpleNamespace(braille=fake_braille)
+    monkeypatch.setitem(sys.modules, "BTSpeak", fake_btspeak)
+    monkeypatch.setitem(sys.modules, "BTSpeak.braille", fake_braille)
+
+    options = [ChoiceOption("alpha", "Alpha, a"), ChoiceOption("beta", "Beta, b")]
+    assert io.choose("Prompt", options) == "beta"
+
+
+def test_btspeak_choose_esc_returns_none_when_cancel_allowed(tmp_path):
+    class FakeDialogs:
+        def cursesDialog(self, draw_fn):
+            class FakeScreen:
+                def __init__(self):
+                    self.keys = [chr(27)]
+
+                def getmaxyx(self):
+                    return (5, 80)
+
+                def clear(self):
+                    return None
+
+                def addstr(self, *_args, **_kwargs):
+                    return None
+
+                def refresh(self):
+                    return None
+
+                def keypad(self, _flag):
+                    return None
+
+                def get_wch(self):
+                    return self.keys.pop(0)
+
+            return draw_fn(FakeScreen())
+
+    io = BTSpeakIO.__new__(BTSpeakIO)
+    io._dialogs = FakeDialogs()
+    io._use_dialogs_api = True
+    io._debug_log_path = tmp_path / "log.txt"
+    io._host = object()
+
+    options = [ChoiceOption("first", "First")]
+    assert io.choose("Prompt", options, show_cancel=True) is None

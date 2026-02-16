@@ -221,6 +221,77 @@ def test_prepare_tls_if_needed_decline_returns_false(monkeypatch):
     assert manager.prepare_tls_if_needed("wss://example.com") is False
 
 
+def test_prepare_tls_if_needed_mismatch_prompts_and_replaces(monkeypatch):
+    class Handler(RecordingHandler):
+        server_id = "server-1"
+
+        def __init__(self):
+            super().__init__()
+            self.saved = None
+            self.config_manager = self
+
+        def set_trusted_certificate(self, server_id, cert_info):
+            self.saved = (server_id, cert_info)
+
+        def get_trusted_certificate(self, server_id):
+            return {"fingerprint": "OLD"}
+
+    handler = Handler()
+    cert = CertificateInfo(
+        host="example.com",
+        common_name="example.com",
+        sans=("example.com",),
+        issuer="ca",
+        valid_from="now",
+        valid_to="later",
+        fingerprint="BB",
+        fingerprint_hex="BB",
+        pem="PEM",
+        matches_host=True,
+    )
+    manager = NetworkManager(handler, trust_prompt=lambda info: True)
+    monkeypatch.setattr(manager, "_run_coroutine_sync", lambda coro: (coro.close(), cert)[1])
+
+    assert manager.prepare_tls_if_needed("wss://example.com") is True
+    assert handler.saved is not None
+    assert handler.saved[1]["fingerprint"] == "BB"
+
+
+def test_prepare_tls_if_needed_mismatch_decline_returns_false(monkeypatch):
+    class Handler(RecordingHandler):
+        server_id = "server-1"
+
+        def __init__(self):
+            super().__init__()
+            self.saved = None
+            self.config_manager = self
+
+        def set_trusted_certificate(self, server_id, cert_info):
+            self.saved = (server_id, cert_info)
+
+        def get_trusted_certificate(self, server_id):
+            return {"fingerprint": "OLD"}
+
+    handler = Handler()
+    cert = CertificateInfo(
+        host="example.com",
+        common_name="example.com",
+        sans=("example.com",),
+        issuer="ca",
+        valid_from="now",
+        valid_to="later",
+        fingerprint="BB",
+        fingerprint_hex="BB",
+        pem="PEM",
+        matches_host=True,
+    )
+    manager = NetworkManager(handler, trust_prompt=lambda info: False)
+    monkeypatch.setattr(manager, "_run_coroutine_sync", lambda coro: (coro.close(), cert)[1])
+
+    assert manager.prepare_tls_if_needed("wss://example.com") is False
+    assert handler.saved is None
+
+
 def test_open_connection_uses_trusted_certificate_entry(monkeypatch):
     handler = RecordingHandler()
     handler.server_id = "server-1"
@@ -249,3 +320,43 @@ def test_open_connection_uses_trusted_certificate_entry(monkeypatch):
 
     ws = asyncio.run(manager._open_connection("wss://example.com"))
     assert ws is not None
+
+
+def test_open_connection_trusted_mismatch_prompts_and_replaces(monkeypatch):
+    handler = RecordingHandler()
+    handler.server_id = "server-1"
+    handler.config_manager = type(
+        "Cfg",
+        (),
+        {"get_trusted_certificate": lambda self, sid: {"fingerprint": "OLD"}},
+    )()
+    manager = NetworkManager(handler)
+
+    async def fake_handle_tls(_url):
+        return object()
+
+    monkeypatch.setattr(manager, "_connect_with_trusted_certificate", lambda *_args, **_kwargs: (_ for _ in ()).throw(nm_mod.ssl.SSLError("mismatch")))
+    monkeypatch.setattr(manager, "_handle_tls_failure", fake_handle_tls)
+
+    ws = asyncio.run(manager._open_connection("wss://example.com"))
+    assert ws is not None
+
+
+def test_open_connection_trusted_mismatch_decline_raises(monkeypatch):
+    handler = RecordingHandler()
+    handler.server_id = "server-1"
+    handler.config_manager = type(
+        "Cfg",
+        (),
+        {"get_trusted_certificate": lambda self, sid: {"fingerprint": "OLD"}},
+    )()
+    manager = NetworkManager(handler)
+
+    async def fake_handle_tls(_url):
+        raise nm_mod.TLSUserDeclinedError()
+
+    monkeypatch.setattr(manager, "_connect_with_trusted_certificate", lambda *_args, **_kwargs: (_ for _ in ()).throw(nm_mod.ssl.SSLError("mismatch")))
+    monkeypatch.setattr(manager, "_handle_tls_failure", fake_handle_tls)
+
+    with pytest.raises(nm_mod.TLSUserDeclinedError):
+        asyncio.run(manager._open_connection("wss://example.com"))

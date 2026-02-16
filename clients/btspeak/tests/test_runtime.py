@@ -300,7 +300,7 @@ def test_add_and_remove_identity_flows():
     assert "identity-2" not in config.identities
 
 
-def test_remove_identity_instruction_uses_nonblocking_message():
+def test_remove_identity_instruction_is_inline_with_confirm_prompt():
     class StrictDialogIO(FakeIO):
         def __init__(self, *, choices=None, inputs=None):
             super().__init__(choices=choices, inputs=inputs)
@@ -308,9 +308,6 @@ def test_remove_identity_instruction_uses_nonblocking_message():
 
         def show_message(self, text: str, *, wait: bool = True) -> None:
             self.show_message_calls.append((text, wait))
-
-        def view_long_text(self, title: str, text: str) -> None:
-            raise AssertionError("view_long_text should not be called during removal")
 
     io = StrictDialogIO(
         choices=["remove_identity", "yes", "exit"],
@@ -321,8 +318,7 @@ def test_remove_identity_instruction_uses_nonblocking_message():
 
     assert rc == 0
     assert "identity-1" not in config.identities
-    assert io.show_message_calls
-    assert io.show_message_calls[-1][1] is False
+    assert io.show_message_calls == []
 
 
 def test_untrusted_certificate_prompt_uses_nonblocking_message():
@@ -1276,6 +1272,35 @@ def test_prompt_trust_decision_defaults_to_decline():
         default for prompt, default in io.default_history if prompt.startswith("Trust this certificate?")
     ]
     assert defaults and defaults[-1] == "decline"
+
+
+def test_prompt_trust_decision_show_details_then_decline():
+    class DetailIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.paged_titles: list[str] = []
+
+        def view_paged_text(self, title: str, lines, *, page_size: int = 30) -> str | None:
+            self.paged_titles.append(title)
+            return "exit"
+
+    io = DetailIO(choices=["details", "decline"])
+    runtime, _, _ = make_runtime(io)
+    cert = CertificateInfo(
+        host="example.org",
+        common_name="example.org",
+        sans=("example.org",),
+        issuer="issuer",
+        valid_from="2024-01-01",
+        valid_to="2025-01-01",
+        fingerprint="fp",
+        fingerprint_hex="fphex",
+        pem="pem",
+        matches_host=False,
+    )
+
+    assert runtime._prompt_trust_decision(cert) is False
+    assert "Certificate details" in io.paged_titles
 
 
 def test_attempt_connection_activity_indicator_success():

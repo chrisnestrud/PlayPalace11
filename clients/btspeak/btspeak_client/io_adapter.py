@@ -217,6 +217,21 @@ class BTSpeakIO(IOAdapter):
         if not options:
             return None
 
+        if hasattr(self._dialogs, "cursesDialog") and hasattr(self._host, "say"):
+            self._debug_log("dialog: choose via curses menu")
+            selected, had_error = self._choose_with_curses(
+                prompt,
+                options,
+                default_key=default_key,
+                show_cancel=show_cancel,
+            )
+            if selected is not None:
+                return selected
+            if had_error:
+                self._debug_log("dialog: curses menu failed; falling back to requestChoice")
+            elif show_cancel:
+                return None
+
         self._debug_log("dialog: requestChoice via dialogs API")
         labels = [option.label for option in options]
         default_value = None
@@ -259,6 +274,116 @@ class BTSpeakIO(IOAdapter):
         self._debug_log("dialog: requestChoice selection not matched")
         return None
 
+    @staticmethod
+    def _extract_label_shortcut(label: str) -> str | None:
+        if not isinstance(label, str):
+            return None
+        label = label.strip()
+        if len(label) < 3:
+            return None
+        if label[-3:-2] != ",":
+            return None
+        shortcut = label[-1].strip().lower()
+        if not shortcut or not shortcut.isalnum():
+            return None
+        return shortcut
+
+    def _choose_with_curses(
+        self,
+        prompt: str,
+        options: Sequence[ChoiceOption],
+        *,
+        default_key: str | None,
+        show_cancel: bool,
+    ) -> tuple[str | None, bool]:
+        import curses
+        from BTSpeak import braille
+
+        total = len(options)
+        if total == 0:
+            return None, False
+
+        index = 0
+        if default_key is not None:
+            for idx, option in enumerate(options):
+                if option.key == default_key:
+                    index = idx
+                    break
+
+        shortcut_map: dict[str, int] = {}
+        for idx, option in enumerate(options):
+            shortcut = self._extract_label_shortcut(option.label)
+            if shortcut and shortcut not in shortcut_map:
+                shortcut_map[shortcut] = idx
+
+        def draw_menu(stdscr):
+            nonlocal index
+            try:
+                curses.curs_set(0)
+            except curses.error:
+                pass
+            try:
+                stdscr.keypad(True)
+            except BaseException:
+                pass
+            while True:
+                max_y, max_x = stdscr.getmaxyx()
+                stdscr.clear()
+                max_x = max(1, max_x - 1)
+                stdscr.addstr(0, 0, prompt[:max_x])
+
+                usable_lines = max(1, max_y - 1)
+                first = (index // usable_lines) * usable_lines
+                if first > total - usable_lines:
+                    first = max(0, total - usable_lines)
+                last = min(total, first + usable_lines)
+
+                for row, opt_index in enumerate(range(first, last), start=1):
+                    label = str(options[opt_index].label)
+                    if opt_index == index:
+                        stdscr.addstr(row, 0, label[:max_x], curses.A_REVERSE)
+                    else:
+                        stdscr.addstr(row, 0, label[:max_x])
+                cursor_row = 1 + (index - first)
+                if 1 <= cursor_row < max_y:
+                    stdscr.move(cursor_row, 0)
+                stdscr.refresh()
+
+                key = stdscr.get_wch()
+                uckey = braille.asciiToUnicodeDots(key)
+
+                if key == chr(27):
+                    if show_cancel:
+                        return None
+                    continue
+                if key == curses.KEY_UP:
+                    index = (index - 1) % total
+                    continue
+                if key == curses.KEY_DOWN:
+                    index = (index + 1) % total
+                    continue
+                if key in (curses.KEY_ENTER, "\n"):
+                    return options[index].key
+                if uckey == braille.dotsToUnicode(braille.Dot1 | braille.Dot2 | braille.Dot3):
+                    index = 0
+                    continue
+                if uckey == braille.dotsToUnicode(braille.Dot4 | braille.Dot5 | braille.Dot6):
+                    index = total - 1
+                    continue
+                if isinstance(key, str):
+                    key_lower = key.lower()
+                    if key_lower in shortcut_map:
+                        index = shortcut_map[key_lower]
+                        return options[index].key
+
+        try:
+            if hasattr(self._dialogs, "tuiDialog"):
+                return self._dialogs.tuiDialog(self._dialogs.cursesDialog, draw_menu), False
+            return self._dialogs.cursesDialog(draw_menu), False
+        except BaseException as exc:
+            self._debug_log(f"dialog: curses menu failed exc={exc!r}")
+            return None, True
+
     def request_text(
         self,
         prompt: str,
@@ -274,11 +399,19 @@ class BTSpeakIO(IOAdapter):
 
         if self._use_dialogs_api and hasattr(self._dialogs, "requestInput"):
             try:
-                value = self._dialogs.requestInput(
-                    prompt,
-                    password=password,
-                    initialText=default or None,
-                )
+                if hasattr(self._dialogs, "tuiDialog"):
+                    value = self._dialogs.tuiDialog(
+                        self._dialogs.requestInput,
+                        prompt,
+                        password=password,
+                        initialText=default or None,
+                    )
+                else:
+                    value = self._dialogs.requestInput(
+                        prompt,
+                        password=password,
+                        initialText=default or None,
+                    )
             except BaseException as exc:
                 self._debug_log(f"dialog: requestInput failed exc={exc!r}")
                 return None
@@ -357,6 +490,8 @@ class BTSpeakIO(IOAdapter):
                     return "next_buffer"
 
         try:
+            if hasattr(self._dialogs, "tuiDialog"):
+                return self._dialogs.tuiDialog(self._dialogs.cursesDialog, draw_page)
             return self._dialogs.cursesDialog(draw_page)
         except BaseException as exc:
             self._debug_log(f"dialog: paged view failed exc={exc!r}")

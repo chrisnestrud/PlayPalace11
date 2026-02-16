@@ -63,6 +63,67 @@ def test_validate_outgoing_and_incoming_emit_activity(monkeypatch):
     assert "Ignored invalid server packet" in handler.history[1][0]
 
 
+def test_prepare_tls_if_needed_mismatch_emits_activity(monkeypatch):
+    class Handler(DummyEventHandler):
+        def __init__(self):
+            super().__init__()
+            self.config_manager = self
+            self.trusted = {"server-1": {"fingerprint": "OLD"}}
+
+        def get_trusted_certificate(self, server_id):
+            return self.trusted.get(server_id)
+
+        def set_trusted_certificate(self, server_id, entry):
+            self.trusted[server_id] = entry
+
+    handler = Handler()
+    cert = CertificateInfo(
+        host="example.com",
+        common_name="example.com",
+        sans=("example.com",),
+        issuer="ca",
+        valid_from="now",
+        valid_to="later",
+        fingerprint="BB",
+        fingerprint_hex="BB",
+        pem="PEM",
+        matches_host=True,
+    )
+    manager = NetworkManager(handler, trust_prompt=lambda info: False)
+    monkeypatch.setattr(manager, "_run_coroutine_sync", lambda coro: (coro.close(), cert)[1])
+
+    assert manager.prepare_tls_if_needed("wss://example.com") is False
+    assert any("Trusted certificate changed" in message for message, _ in handler.history)
+
+
+def test_open_connection_mismatch_emits_activity(monkeypatch):
+    class Handler(DummyEventHandler):
+        def __init__(self):
+            super().__init__()
+            self.config_manager = type(
+                "Cfg",
+                (),
+                {"get_trusted_certificate": lambda _self, _sid: {"fingerprint": "OLD"}},
+            )()
+
+    handler = Handler()
+    manager = NetworkManager(handler)
+
+    async def fake_handle_tls(_url):
+        raise net_mod.TLSUserDeclinedError()
+
+    monkeypatch.setattr(
+        manager,
+        "_connect_with_trusted_certificate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(net_mod.ssl.SSLError("mismatch")),
+    )
+    monkeypatch.setattr(manager, "_handle_tls_failure", fake_handle_tls)
+
+    with pytest.raises(net_mod.TLSUserDeclinedError):
+        asyncio.run(manager._open_connection("wss://example.com"))
+    assert any("Trusted certificate changed" in message for message, _ in handler.history)
+
+
 def test_handle_packet_dispatches(monkeypatch):
     handler = DummyEventHandler()
     nm = NetworkManager(handler)
