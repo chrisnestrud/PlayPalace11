@@ -42,15 +42,15 @@ class TestSnakesAndLaddersUnit:
         game.add_player("Alice", user1)
         game.add_player("Bob", user2)
         game.on_start()
-        
+
         # Modify state
         game.players[0].position = 50
         game.players[0].finished = False
-        
+
         # Serialize
         json_str = game.to_json()
         loaded = SnakesAndLaddersGame.from_json(json_str)
-        
+
         assert loaded.players[0].position == 50
         assert loaded.players[0].finished is False
         assert loaded.round == 0 # Base game has round 0 usually unless incremented
@@ -74,25 +74,25 @@ class TestSnakesAndLaddersGameFlow:
         # but we can verify position changed.
         old_pos = self.p1.position
         self.game.execute_action(self.p1, "roll")
-        
+
         # The move is queued in event_queue, not immediate
         # Must process ticks
-        
+
         # Move events happen after delays.
         # Check event queue
         assert len(self.game.event_queue) > 0
-        
+
         # Process enough ticks
         for _ in range(100):
             self.game.on_tick()
-            
+
         assert self.p1.position > old_pos
 
     def test_ladder_interaction(self):
         """Test hitting a ladder."""
         # Manually verify ladder logic by forcing position (after movement logic)
         # But here we want to test the _handle_event logic mostly.
-        
+
         # Let's inject a ladder event directly to test logic
         self.game._handle_event("ladder", {"player_id": self.p1.id, "start": 1, "end": 38})
         assert self.p1.position == 38
@@ -106,9 +106,9 @@ class TestSnakesAndLaddersGameFlow:
         """Test check positions action."""
         self.p1.position = 10
         self.p2.position = 20
-        
+
         self.game.execute_action(self.p1, "check_positions")
-        
+
         messages = self.user1.get_spoken_messages()
         assert any("Alice 10" in m and "Bob 20" in m for m in messages)
 
@@ -125,11 +125,11 @@ class TestSnakesAndLaddersPlayTest:
         game.add_player("Bot2", bot2)
         game.on_start()
 
-        max_ticks = 50000 
+        max_ticks = 50000
         for tick in range(max_ticks):
             if not game.game_active:
                 break
-            
+
             # Save/Load occasionally
             if tick % 500 == 0 and tick > 0:
                 json_str = game.to_json()
@@ -139,9 +139,9 @@ class TestSnakesAndLaddersPlayTest:
                 game.rebuild_runtime_state()
                 for p in game.players:
                     game.setup_player_actions(p)
-            
+
             game.on_tick()
-            
+
         assert not game.game_active
         assert game.winner is not None
         assert game.winner.position == 100

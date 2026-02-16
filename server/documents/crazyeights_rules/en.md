@@ -20,7 +20,7 @@ Not all cards are created equal. There are four types of special cards that shak
 
 * **Wild 8:** Eights can be played on top of anything, at any time. When you play a Wild 8, you choose the suit that the next player must follow. This is the most powerful card in the game.
 * **Skip:** Playing a Skip skips the next player's turn entirely.
-* **Reverse:** Playing a reverse  reverses the direction of play. In a two-player game, since reversing direction has the same effect as skipping, it simply skips the other player instead. Skips and reverses have a lot of strategic value. 
+* **Reverse:** Playing a reverse  reverses the direction of play. In a two-player game, since reversing direction has the same effect as skipping, it simply skips the other player instead. Skips and reverses have a lot of strategic value.
 * **Draw Two:** Playing a Draw Two forces the next player to draw 2 cards from the deck and lose their turn. Again, if you are in a two-player game, the other player will draw and you will get another turn. They will even have to draw if you play a Draw Two as your last card.
 
 ### Drawing and Passing
