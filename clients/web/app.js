@@ -443,6 +443,8 @@ function buildRefreshPacket(refreshToken, username = "") {
   const packet = {
     type: "refresh_session",
     refresh_token: refreshToken,
+    client_type: "Web",
+    platform: getPlatformString(),
   };
   if (username) {
     packet.username = normalizeUsername(username);

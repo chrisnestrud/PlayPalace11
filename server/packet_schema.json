@@ -500,6 +500,30 @@
       "RefreshSessionPacket": {
         "additionalProperties": false,
         "properties": {
+          "client_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Client Type"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Platform"
+          },
           "refresh_token": {
             "title": "Refresh Token",
             "type": "string"

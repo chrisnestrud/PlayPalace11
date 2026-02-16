@@ -221,6 +221,8 @@ class NetworkManager:
             "type": "refresh_session",
             "refresh_token": self.refresh_token,
             "username": username,
+            "client_type": "Desktop",
+            "platform": f"{platform_mod.system()} {platform_mod.release()} {platform_mod.machine()}",
         }
         if not self._validate_outgoing_packet(packet):
             raise RuntimeError("Client refused to send invalid refresh packet.")

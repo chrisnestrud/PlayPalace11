@@ -70,6 +70,8 @@ class RefreshSessionPacket(BasePacket):
     type: Literal["refresh_session"] = "refresh_session"
     refresh_token: str
     username: str | None = None
+    client_type: str | None = None
+    platform: str | None = None
 
 
 class MenuSelectionPacket(BasePacket):

@@ -1281,6 +1281,8 @@ class Server(AdministrationMixin):
         """Refresh an access session using a refresh token."""
         refresh_token = packet.get("refresh_token", "")
         username_hint = packet.get("username", "")
+        client.client_type = packet.get("client_type") or ""
+        client.platform = packet.get("platform") or ""
         client_ip = self._get_client_ip(client)
         throttle_message = self._check_refresh_rate_limit(client_ip)
         if throttle_message:
