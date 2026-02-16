@@ -167,7 +167,15 @@ class BTSpeakClientRuntime:
         return choice == "yes"
 
     def _show_instruction_dialog(self, heading: str, instruction: str) -> None:
-        self.io.view_long_text(heading, instruction)
+        message = f"{heading}\n\n{instruction}"
+        try:
+            self.io.show_message(message, wait=False)
+        except TypeError:
+            # Older IO adapters may not accept wait; fall back safely.
+            try:
+                self.io.show_message(message)
+            except BaseException:
+                self.io.notify(message)
 
     def _mark_audio_activity(self) -> None:
         self._last_audio_activity = time.time()
@@ -539,7 +547,15 @@ class BTSpeakClientRuntime:
             end = min(total_lines, start + page_size)
             header = f"{title} (Page {page_index + 1} of {total_pages})"
             body = "\n".join(lines[start:end])
-            self.io.view_long_text(header, body)
+            message = f"{header}\n\n{body}"
+            try:
+                self.io.show_message(message, wait=False)
+            except TypeError:
+                try:
+                    self.io.show_message(message)
+                except BaseException as exc:
+                    self._debug_log(f"buffer page message failed: {exc!r}")
+                    self._safe_notify(message)
 
             options = [ChoiceOption("next", "Next page (Dot-8)"), ChoiceOption("back", "Back (Z-chord)")]
             if page_index > 0:
@@ -574,10 +590,11 @@ class BTSpeakClientRuntime:
         details = "\n".join(lines)
 
         try:
-            self.io.view_long_text("Untrusted certificate", details)
+            message = f"Untrusted certificate\n\n{details}"
+            self.io.show_message(message, wait=False)
         except BaseException as exc:
             self._debug_log(f"cert details failed: {exc!r}")
-            self._safe_notify(details)
+            self._safe_notify(f"Untrusted certificate\n\n{details}")
 
         choice = self._safe_choose(
             "Trust this certificate? Select an option and press Enter.",

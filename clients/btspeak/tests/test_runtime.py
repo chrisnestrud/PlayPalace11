@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 from btspeak_client.io_adapter import IOAdapter
-from btspeak_client.runtime import BTSpeakClientRuntime
+from btspeak_client.runtime import BTSpeakClientRuntime, Credentials
 from btspeak_client.network_manager import CertificateInfo
 
 
@@ -298,6 +298,163 @@ def test_add_and_remove_identity_flows():
 
     assert rc == 0
     assert "identity-2" not in config.identities
+
+
+def test_remove_identity_instruction_uses_nonblocking_message():
+    class StrictDialogIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.show_message_calls: list[tuple[str, bool]] = []
+
+        def show_message(self, text: str, *, wait: bool = True) -> None:
+            self.show_message_calls.append((text, wait))
+
+        def view_long_text(self, title: str, text: str) -> None:
+            raise AssertionError("view_long_text should not be called during removal")
+
+    io = StrictDialogIO(
+        choices=["remove_identity", "yes", "exit"],
+    )
+    runtime, _, config = make_runtime(io)
+
+    rc = runtime.run()
+
+    assert rc == 0
+    assert "identity-1" not in config.identities
+    assert io.show_message_calls
+    assert io.show_message_calls[-1][1] is False
+
+
+def test_untrusted_certificate_prompt_uses_nonblocking_message():
+    class StrictDialogIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.show_message_calls: list[tuple[str, bool]] = []
+
+        def show_message(self, text: str, *, wait: bool = True) -> None:
+            self.show_message_calls.append((text, wait))
+
+        def view_long_text(self, title: str, text: str) -> None:
+            raise AssertionError("view_long_text should not be called for cert prompt")
+
+    io = StrictDialogIO(choices=["decline"])
+    runtime, _, _ = make_runtime(io)
+
+    cert_info = CertificateInfo(
+        host="example.org",
+        common_name="example.org",
+        issuer="issuer",
+        valid_from="2024-01-01",
+        valid_to="2025-01-01",
+        fingerprint="fp",
+        fingerprint_hex="fphex",
+        pem="pem",
+        matches_host=False,
+        sans=("example.org",),
+    )
+
+    approved = runtime._prompt_trust_decision(cert_info)
+
+    assert approved is False
+    assert io.show_message_calls
+    assert io.show_message_calls[-1][1] is False
+
+
+def test_review_buffer_pages_uses_nonblocking_message_when_paged_view_unavailable():
+    class StrictDialogIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.show_message_calls: list[tuple[str, bool]] = []
+
+        def show_message(self, text: str, *, wait: bool = True) -> None:
+            self.show_message_calls.append((text, wait))
+
+        def view_long_text(self, title: str, text: str) -> None:
+            raise AssertionError("view_long_text should not be called for buffer pages")
+
+        def view_paged_text(self, title: str, lines, *, page_size: int = 30) -> str | None:
+            return None
+
+    io = StrictDialogIO(choices=["back"])
+    runtime, _, _ = make_runtime(io)
+
+    runtime._review_buffer_pages("Buffer", ["line1", "line2"], page_size=1)
+
+    assert io.show_message_calls
+    assert io.show_message_calls[-1][1] is False
+
+
+def test_review_buffer_pages_next_and_end_of_buffer_notice():
+    class TrackingIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.show_message_calls: list[str] = []
+
+        def show_message(self, text: str, *, wait: bool = True) -> None:
+            self.show_message_calls.append(text)
+
+    io = TrackingIO(choices=["next", "next", "back"])
+    runtime, _, _ = make_runtime(io)
+
+    runtime._review_buffer_pages("Buffer", ["line1", "line2", "line3"], page_size=2)
+
+    assert any("Page 1 of 2" in message for message in io.show_message_calls)
+    assert any("Page 2 of 2" in message for message in io.show_message_calls)
+    assert "End of buffer." in io.messages
+
+
+def test_review_buffer_pages_prev_at_start_notices():
+    class TrackingIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.show_message_calls: list[str] = []
+
+        def show_message(self, text: str, *, wait: bool = True) -> None:
+            self.show_message_calls.append(text)
+
+    io = TrackingIO(choices=["prev", "back"])
+    runtime, _, _ = make_runtime(io)
+
+    runtime._review_buffer_pages("Buffer", ["line1", "line2", "line3"], page_size=2)
+
+    assert "Start of buffer." in io.messages
+    assert any("Page 1 of 2" in message for message in io.show_message_calls)
+
+
+def test_build_credentials_missing_identity_notifies_and_returns_none():
+    io = FakeIO()
+    runtime, _, _ = make_runtime(io)
+
+    result = runtime._build_credentials("missing-id")
+
+    assert result is None
+    assert "Identity no longer exists." in io.messages
+
+
+def test_build_credentials_no_servers_notifies_and_returns_none():
+    io = FakeIO()
+    runtime, _, config = make_runtime(io)
+    config.servers = {}
+
+    result = runtime._build_credentials("identity-1")
+
+    assert result is None
+    assert "No servers available." in io.messages
+
+
+def test_build_credentials_missing_server_url_notifies_and_returns_none():
+    io = FakeIO()
+    runtime, _, config = make_runtime(io)
+
+    def no_url(_server_id):
+        return None
+
+    config.get_server_url = no_url
+
+    result = runtime._build_credentials("identity-1")
+
+    assert result is None
+    assert "Selected server has no URL." in io.messages
 
 
 def test_add_identity_io_failure_does_not_crash_runtime():
@@ -626,7 +783,7 @@ def test_keybind_without_args_shows_help():
     assert shown
 
 
-def test_session_loop_btspeak_review_buffers_uses_long_view(monkeypatch):
+def test_session_loop_btspeak_review_buffers_uses_nonblocking_message(monkeypatch):
     io = FakeIO(choices=["review_buffer", "chats", "back", "back", "disconnect"])
     runtime, holder, _ = make_runtime(io)
     runtime.connected = True
@@ -634,12 +791,12 @@ def test_session_loop_btspeak_review_buffers_uses_long_view(monkeypatch):
     runtime.current_menu_id = "main"
     runtime.current_menu_items = [{"text": "Play", "id": "play"}]
     runtime.add_history("hello chat", "chats")
-    long_views = []
+    messages: list[str] = []
 
-    def capture_long_view(title, text):
-        long_views.append((title, text))
+    def capture_message(text: str, *, wait: bool = True) -> None:
+        messages.append(text)
 
-    io.view_long_text = capture_long_view
+    io.show_message = capture_message
     io.view_paged_text = lambda *args, **kwargs: None
 
     import btspeak_client.runtime as runtime_mod
@@ -654,7 +811,7 @@ def test_session_loop_btspeak_review_buffers_uses_long_view(monkeypatch):
 
     runtime._session_loop()
 
-    assert long_views
+    assert messages
     assert holder["manager"].disconnect_calls == 1
 
 
@@ -791,6 +948,15 @@ def test_chat_and_select_input_validation_rejected_count():
     runtime._handle_user_input("/select nope")
 
     assert io.rejected == 2
+
+
+def test_handle_user_input_ignores_whitespace_only():
+    io = FakeIO()
+    runtime, holder, _ = make_runtime(io)
+
+    runtime._handle_user_input("   ")
+
+    assert holder["manager"].sent_packets == []
 
 
 def test_unknown_slash_command_passthrough():
@@ -1089,6 +1255,88 @@ def test_prompt_trust_decision_uses_io_choose():
     assert runtime._prompt_trust_decision(cert) is True
 
 
+def test_prompt_trust_decision_defaults_to_decline():
+    io = FakeIO()
+    runtime, _, _ = make_runtime(io)
+    cert = CertificateInfo(
+        host="example.org",
+        common_name="example.org",
+        sans=("example.org",),
+        issuer="issuer",
+        valid_from="2024-01-01",
+        valid_to="2025-01-01",
+        fingerprint="fp",
+        fingerprint_hex="fphex",
+        pem="pem",
+        matches_host=False,
+    )
+
+    assert runtime._prompt_trust_decision(cert) is False
+    defaults = [
+        default for prompt, default in io.default_history if prompt.startswith("Trust this certificate?")
+    ]
+    assert defaults and defaults[-1] == "decline"
+
+
+def test_attempt_connection_activity_indicator_success():
+    class ActivityIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.start_calls = 0
+            self.stop_calls = 0
+
+        def start_activity_indicator(self) -> None:
+            self.start_calls += 1
+
+        def stop_activity_indicator(self) -> None:
+            self.stop_calls += 1
+
+    io = ActivityIO()
+    runtime, _, _ = make_runtime(io)
+
+    credentials = Credentials(
+        identity_id="identity-1",
+        server_id="server-1",
+        server_url="ws://localhost:8000",
+        username="alice",
+        password="secret",
+    )
+
+    assert runtime._attempt_connection(credentials) is True
+    assert io.start_calls == 1
+    assert io.stop_calls == 1
+
+
+def test_attempt_connection_activity_indicator_stops_on_auth_fail():
+    class ActivityIO(FakeIO):
+        def __init__(self, *, choices=None, inputs=None):
+            super().__init__(choices=choices, inputs=inputs)
+            self.start_calls = 0
+            self.stop_calls = 0
+
+        def start_activity_indicator(self) -> None:
+            self.start_calls += 1
+
+        def stop_activity_indicator(self) -> None:
+            self.stop_calls += 1
+
+    io = ActivityIO()
+    runtime, holder, _ = make_runtime(io)
+    holder["manager"].connect_mode = "auth_fail"
+
+    credentials = Credentials(
+        identity_id="identity-1",
+        server_id="server-1",
+        server_url="ws://localhost:8000",
+        username="alice",
+        password="secret",
+    )
+
+    assert runtime._attempt_connection(credentials) is False
+    assert io.start_calls == 1
+    assert io.stop_calls == 1
+
+
 def test_set_client_option_updates_config_and_sends_packet():
     io = FakeIO(choices=["exit"])
     runtime, holder, config = make_runtime(io)
@@ -1115,6 +1363,31 @@ def test_set_client_option_updates_config_and_sends_packet():
     assert last_packet["type"] == "client_options"
     assert last_packet["options"]["audio"]["music_volume"] == 80
     assert runtime.audio_manager.music[-1] == 80
+
+
+def test_set_client_option_value_no_server_id_noop():
+    io = FakeIO()
+    runtime, holder, config = make_runtime(io)
+    runtime.connected = True
+
+    runtime._set_client_option_value(("audio", "music_volume"), 80)
+
+    assert config.set_option_calls == []
+    assert holder["manager"].sent_packets == []
+
+
+def test_get_nested_mapping_returns_nested_dict():
+    runtime, _, _ = make_runtime(FakeIO())
+    root = {"audio": {"music_volume": 20}}
+
+    assert runtime._get_nested_mapping(root, ("audio",)) == {"music_volume": 20}
+
+
+def test_get_nested_mapping_returns_empty_when_not_dict():
+    runtime, _, _ = make_runtime(FakeIO())
+    root = {"audio": {"music_volume": 20}}
+
+    assert runtime._get_nested_mapping(root, ("audio", "music_volume")) == {}
 
 
 def test_session_menu_waits_for_new_menu_when_unchanged(monkeypatch):

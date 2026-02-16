@@ -66,3 +66,18 @@ def test_choose_returns_none_when_dialog_returns_none():
     io = make_io_with_result(None)
     options = [ChoiceOption("first", "First")]
     assert io.choose("Prompt", options) is None
+
+
+def test_choose_returns_none_when_label_not_found():
+    io = make_io_with_result(FakeChoice(key="x", label="Unknown"))
+    options = [
+        ChoiceOption("first", "First"),
+        ChoiceOption("second", "Second"),
+    ]
+    assert io.choose("Prompt", options) is None
+
+
+def test_choose_returns_none_when_label_not_string():
+    io = make_io_with_result(FakeChoice(key="x", label=None))
+    options = [ChoiceOption("first", "First")]
+    assert io.choose("Prompt", options) is None

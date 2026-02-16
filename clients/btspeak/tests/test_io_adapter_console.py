@@ -117,6 +117,27 @@ def test_btspeak_show_message_uses_dialog(monkeypatch, tmp_path):
     assert calls["shown"] is True
 
 
+def test_btspeak_show_message_falls_back_to_notify(monkeypatch, tmp_path):
+    spoken = []
+
+    class FakeDialogs:
+        def showMessage(self, _text, wait=True):
+            raise RuntimeError("boom")
+
+    class FakeHost:
+        def say(self, text, immediate=False):
+            spoken.append((text, immediate))
+
+    io = BTSpeakIO.__new__(BTSpeakIO)
+    io._dialogs = FakeDialogs()
+    io._use_dialogs_api = True
+    io._debug_log_path = tmp_path / "log.txt"
+    io._host = FakeHost()
+
+    io.show_message("Hello", wait=False)
+    assert spoken == [("Hello", False)]
+
+
 def test_btspeak_choose_returns_none_on_exception(monkeypatch, tmp_path):
     class FakeDialogs:
         def requestChoice(self, *args, **kwargs):
@@ -151,6 +172,23 @@ def test_btspeak_view_long_text_falls_back_to_notify(monkeypatch, tmp_path):
 
     io.view_long_text("Title", "Body")
     assert spoken == []
+
+
+def test_btspeak_view_long_text_uses_view_lines(monkeypatch, tmp_path):
+    calls = {"lines": None}
+
+    class FakeDialogs:
+        def viewLines(self, lines):
+            calls["lines"] = lines
+
+    io = BTSpeakIO.__new__(BTSpeakIO)
+    io._dialogs = FakeDialogs()
+    io._use_dialogs_api = True
+    io._debug_log_path = tmp_path / "log.txt"
+    io._host = object()
+
+    io.view_long_text("Title", "Body line")
+    assert calls["lines"] == ["Title", "", "Body line"]
 
 
 def test_btspeak_request_text_returns_none_without_dialogs(monkeypatch, tmp_path):

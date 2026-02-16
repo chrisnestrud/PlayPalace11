@@ -232,7 +232,7 @@ class BTSpeakIO(IOAdapter):
                 default=default_value,
                 allowEmptyChoice=show_cancel,
                 okayLabel="Select",
-                cancelLabel="Cancel" if show_cancel else None,
+                cancelLabel="Back" if show_cancel else None,
                 showCancelButton=show_cancel,
             )
         except BaseException as exc:
