@@ -83,6 +83,7 @@ SERVER_TO_CLIENT_SAMPLES = [
         "reconnect": False,
         "show_message": True,
         "return_to_login": True,
+        "auth_reason": "invalid_credentials",
     },
     {
         "type": "server_status",

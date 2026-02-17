@@ -71,6 +71,7 @@ class FakeAuth:
 class FakeDB:
     def __init__(self):
         self.user_count = 1
+        self.refresh_tokens: dict[str, dict[str, str]] = {}
 
     def get_user_count(self):
         return self.user_count
@@ -83,6 +84,9 @@ class FakeDB:
 
     def delete_all_tables(self):
         return None
+
+    def get_refresh_token(self, token: str):
+        return self.refresh_tokens.get(token)
 
 
 @pytest.fixture
@@ -271,19 +275,36 @@ async def test_handle_refresh_session_failure_sends_disconnect(make_server):
     types = [p.get("type") for p in client.sent]
     assert "refresh_session_failure" in types
     assert "disconnect" in types
+    disconnect = next(p for p in client.sent if p.get("type") == "disconnect")
+    assert disconnect["reconnect"] is True
+    assert disconnect.get("return_to_login", False) is False
+    assert disconnect["auth_reason"] == "refresh_token_invalid"
 
 
 @pytest.mark.asyncio
 async def test_handle_refresh_session_username_mismatch(make_server):
     srv = make_server()
     client = DummyClient()
-    srv._auth.refresh_payloads["tok"] = ("alice", "access2", 1, "refresh2", 2)
+    srv._db.refresh_tokens["tok"] = {"username": "alice"}
+
+    called = {"refresh_session": 0}
+
+    def fake_refresh_session(*_args):
+        called["refresh_session"] += 1
+        return ("alice", "access2", 1, "refresh2", 2)
+
+    srv._auth.refresh_session = fake_refresh_session
     packet = {"type": "refresh_session", "refresh_token": "tok", "username": "bob"}
 
     await srv._handle_refresh_session(client, packet)
 
     failures = [p for p in client.sent if p.get("type") == "refresh_session_failure"]
     assert failures and "does not match" in failures[0]["message"]
+    assert called["refresh_session"] == 0
+    disconnects = [p for p in client.sent if p.get("type") == "disconnect"]
+    assert disconnects and disconnects[0]["reconnect"] is True
+    assert disconnects[0].get("return_to_login", False) is False
+    assert disconnects[0]["auth_reason"] == "refresh_token_mismatch"
 
 
 @pytest.mark.asyncio

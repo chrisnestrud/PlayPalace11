@@ -52,6 +52,7 @@ class NetworkManager:
         self.session_expires_at = None
         self.refresh_token = None
         self.refresh_expires_at = None
+        self._prefer_password_auth_once = False
         self._validation_errors = 0
 
     def _validate_outgoing_packet(self, packet: dict) -> bool:
@@ -105,12 +106,20 @@ class NetworkManager:
                 self.session_expires_at = None
                 self.refresh_token = None
                 self.refresh_expires_at = None
+                self._prefer_password_auth_once = False
 
             self.username = username
             self.should_stop = False
             self.server_url = server_url
             self.server_id = getattr(self.main_window, "server_id", None)
-            if refresh_token:
+            if self._prefer_password_auth_once:
+                # Force one authorize-with-password attempt after refresh failure.
+                self.session_token = None
+                self.session_expires_at = None
+                self.refresh_token = None
+                self.refresh_expires_at = None
+                self._prefer_password_auth_once = False
+            elif refresh_token:
                 self.refresh_token = refresh_token
                 self.refresh_expires_at = refresh_expires_at
 
@@ -565,6 +574,7 @@ class NetworkManager:
             _PACKET_DISPATCH[packet_type](self.main_window, packet)
 
     def _handle_authorize_success(self, packet, packet_type: str) -> None:
+        self._prefer_password_auth_once = False
         session_token = packet.get("session_token")
         if session_token:
             self.session_token = session_token
@@ -584,6 +594,7 @@ class NetworkManager:
         self.session_expires_at = None
         self.refresh_token = None
         self.refresh_expires_at = None
+        self._prefer_password_auth_once = True
         message = packet.get("message", "Session expired. Please log in again.")
         wx.CallAfter(self.main_window.add_history, message, "activity")
 

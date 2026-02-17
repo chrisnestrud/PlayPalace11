@@ -451,7 +451,12 @@ class Server(AdministrationMixin):
         return username, password, None
 
     @staticmethod
-    async def _send_credential_error(client: ClientConnection, message: str) -> None:
+    async def _send_credential_error(
+        client: ClientConnection,
+        message: str,
+        *,
+        auth_reason: str = "credential_error",
+    ) -> None:
         """Send a credential validation error and disconnect the client."""
         await client.send({"type": "play_sound", "name": "accounterror.ogg"})
         await client.send({"type": "speak", "text": message})
@@ -462,6 +467,7 @@ class Server(AdministrationMixin):
                 "show_message": True,
                 "return_to_login": True,
                 "message": message,
+                "auth_reason": auth_reason,
             }
         )
 
@@ -786,6 +792,7 @@ class Server(AdministrationMixin):
                     "show_message": True,
                     "return_to_login": True,
                     "message": Localization.get(user.locale, "already-logged-in"),
+                    "auth_reason": "session_replaced",
                 })
             except (OSError, RuntimeError, websockets.exceptions.ConnectionClosed) as exc:
                 LOG.debug("Failed to notify replaced session: %s", exc)
@@ -945,7 +952,9 @@ class Server(AdministrationMixin):
         # Create or update network user with preferences and persistent UUID
         user_record = self._auth.get_user(username)
         if not user_record:
-            await self._send_credential_error(client, "Account not found.")
+            await self._send_credential_error(
+                client, "Account not found.", auth_reason="account_not_found"
+            )
             return
         preferences = self._load_user_preferences(user_record)
         user, is_new_login = await self._attach_or_update_user(
@@ -1156,25 +1165,29 @@ class Server(AdministrationMixin):
             token_username = self._auth.validate_session(session_token)
             if not token_username:
                 await self._send_credential_error(
-                    client, "Session expired. Please log in again."
+                    client,
+                    "Session expired. Please log in again.",
+                    auth_reason="session_token_invalid",
                 )
                 return
             if username_raw and token_username.lower() != username_raw.lower():
                 await self._send_credential_error(
-                    client, "Session token does not match username."
+                    client,
+                    "Session token does not match username.",
+                    auth_reason="session_token_mismatch",
                 )
                 return
             username = token_username
         else:
             username, password, error = self._validate_credentials(username_raw, password_raw)
             if error:
-                await self._send_credential_error(client, error)
+                await self._send_credential_error(client, error, auth_reason="invalid_credentials")
                 return
 
             client_ip = self._get_client_ip(client)
             throttle_message = self._check_login_rate_limit(client_ip, username)
             if throttle_message:
-                await self._send_credential_error(client, throttle_message)
+                await self._send_credential_error(client, throttle_message, auth_reason="rate_limited")
                 return
 
             # Try to authenticate or register
@@ -1192,6 +1205,7 @@ class Server(AdministrationMixin):
                         "show_message": True,
                         "return_to_login": True,
                         "message": error_message,
+                        "auth_reason": "invalid_credentials",
                     })
                     return
 
@@ -1211,6 +1225,7 @@ class Server(AdministrationMixin):
                         "show_message": True,
                         "return_to_login": True,
                         "message": error_message,
+                        "auth_reason": "invalid_credentials",
                     })
                     return
 
@@ -1286,8 +1301,29 @@ class Server(AdministrationMixin):
         client_ip = self._get_client_ip(client)
         throttle_message = self._check_refresh_rate_limit(client_ip)
         if throttle_message:
-            await self._send_credential_error(client, throttle_message)
+            await self._send_credential_error(client, throttle_message, auth_reason="rate_limited")
             return
+
+        # Validate provided username hint before rotating tokens so a mismatch
+        # cannot consume an otherwise valid refresh token.
+        if username_hint:
+            get_refresh_token = getattr(self._db, "get_refresh_token", None)
+            token_record = None
+            if callable(get_refresh_token):
+                with contextlib.suppress(Exception):
+                    token_record = get_refresh_token(refresh_token)
+            if token_record and token_record["username"].lower() != username_hint.lower():
+                await client.send({
+                    "type": "refresh_session_failure",
+                    "message": "Refresh token does not match username.",
+                })
+                await client.send({
+                    "type": "disconnect",
+                    "reconnect": True,
+                    "retry_after": 1,
+                    "auth_reason": "refresh_token_mismatch",
+                })
+                return
 
         result = self._auth.refresh_session(
             refresh_token, self._access_token_ttl_seconds, self._refresh_token_ttl_seconds
@@ -1299,10 +1335,9 @@ class Server(AdministrationMixin):
             })
             await client.send({
                 "type": "disconnect",
-                "reconnect": False,
-                "show_message": True,
-                "return_to_login": True,
-                "message": "Session expired. Please log in again.",
+                "reconnect": True,
+                "retry_after": 1,
+                "auth_reason": "refresh_token_invalid",
             })
             return
 
@@ -1314,10 +1349,9 @@ class Server(AdministrationMixin):
             })
             await client.send({
                 "type": "disconnect",
-                "reconnect": False,
-                "show_message": True,
-                "return_to_login": True,
-                "message": "Session expired. Please log in again.",
+                "reconnect": True,
+                "retry_after": 1,
+                "auth_reason": "refresh_token_mismatch",
             })
             return
 
